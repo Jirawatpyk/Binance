@@ -1,0 +1,15 @@
+lo-LA:
+  rules:
+    - maxWords: 500
+      translators: [LO_T1@eqho.com]
+    - maxWords: 2000
+      translators: [LO_T3@eqho.com]
+    - maxWords: null
+      translators: [LO_T3@eqho.com, LO_T4@eqho.com]
+
+km-KH:
+  rules:
+    - maxWords: 500
+      translators: [KM_T1@eqho.com]
+    - maxWords: null
+      translators: [KM_T1@eqho.com, KM_T2@eqho.com]

@@ -1,0 +1,22 @@
+polling:
+  intervalMinutes: 5
+  jitterSeconds: 30
+
+browser:
+  headless: true
+  viewport: { width: 1920, height: 1080 }
+  navigationTimeoutMs: 30000
+
+storage:
+  statePath: ./data/state.json
+  logsDir: ./logs
+  cookiesPath: ./data/cookies.json
+
+assignment:
+  dryRun: false
+  maxRetries: 3
+  retryDelayMs: 5000
+
+logging:
+  level: info
+  rotateDays: 14

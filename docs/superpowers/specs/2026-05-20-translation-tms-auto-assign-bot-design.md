@@ -16,11 +16,22 @@
 - รันได้ทั้ง Local Windows และ Docker/VPS
 - Error handling ครบ + log + screenshot debug
 
-### Non-Goals
+### Non-Goals (Phase 1)
 - ไม่ทำหน้าที่ตรวจสอบคุณภาพการแปล (เป็นงาน reviewer ในระบบเอง)
 - ไม่ assign ภาษาอื่นนอกจาก `lo-LA` / `km-KH`
 - ไม่จัดการ Reviewer assignment (workflow ขั้นถัดไป — ขอบเขตของ phase อื่น)
 - ไม่ทำ UI สำหรับจัดการ bot (config ผ่าน YAML file)
+
+### Future Scope (Phase 2 — Dashboard Tracking)
+หลัง backend Phase 1 stable แล้ว มีแผนต่อ **Dashboard Tracking** สำหรับติดตามผลงาน bot:
+- หน้า dashboard แสดง: งานที่ assign สำเร็จ/ล้มเหลว/รอ retry, สถิติแบ่งตามภาษา/translator/ช่วงเวลา
+- Health check: bot online/offline, polling interval ล่าสุด, error rate
+- API/Database layer สำหรับ frontend (ปัจจุบัน state.json อาจ migrate ไป SQLite/PostgreSQL)
+
+**ผลกระทบต่อ Phase 1 design:**
+- §3.7 `StateStore` ควรออกแบบ interface เผื่อ swap implementation (JSON → DB) ได้ — abstract storage layer
+- §3.8 `Logger` ใช้ structured JSON logs (winston JSON format) → ง่ายต่อการ ingest เข้า dashboard
+- เก็บ event log ครบ: jobId, timestamp, language, translator, wordCount, status, error → เป็น source of truth สำหรับ dashboard ภายหลัง
 
 ---
 

@@ -12,24 +12,29 @@
     "test:watch": "vitest",
     "test:integration": "playwright test",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke.ts"
+    "smoke": "tsx scripts/smoke.ts",
+    "service:install": "npm run build && node scripts/install-windows-service.js install",
+    "service:uninstall": "node scripts/install-windows-service.js uninstall"
   },
-  "engines": { "node": ">=20.0.0" },
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "dependencies": {
+    "dotenv": "^16.4.7",
     "playwright": "^1.49.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",
     "winston": "^3.17.0",
     "winston-daily-rotate-file": "^5.0.0",
-    "zod": "^3.24.1",
     "yaml": "^2.6.1",
-    "dotenv": "^16.4.7"
+    "zod": "^3.24.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",
     "@types/node": "^22.10.5",
-    "typescript": "^5.7.2",
+    "node-windows": "^1.0.0-beta.8",
     "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }
 }

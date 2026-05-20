@@ -8,22 +8,49 @@ export class JobScanner {
   constructor(private page: Page, private logger: winston.Logger) {}
 
   async scan(): Promise<Job[]> {
-    // TODO(phase-2): Implement pagination — spec §3.3 requires it for total > 10.
-    // Current behavior: only page 1 is parsed; warning logged if rows >= 10.
     await this.page.goto(JOB_BOARD_URL, { waitUntil: 'domcontentloaded' });
     await this.page.waitForSelector('table, [role="table"]', { timeout: 15_000 });
-    const rows = await this.parseRows();
-    const filtered = rows.filter((j) =>
+
+    const allRows: Job[] = [];
+    const seenIds = new Set<string>();
+    const MAX_PAGES = 20; // safety cap to avoid infinite loops if Next never disables
+
+    for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
+      const rows = await this.parseRows();
+      for (const r of rows) {
+        if (!seenIds.has(r.id)) {
+          seenIds.add(r.id);
+          allRows.push(r);
+        }
+      }
+      this.logger.debug('page parsed', { pageNum, rowsOnPage: rows.length });
+
+      const nextBtn = this.page
+        .locator('button[aria-label*="next" i]:not([disabled]), button:has-text("Next"):not([disabled]), .ant-pagination-next:not(.ant-pagination-disabled) > button')
+        .first();
+
+      const visible = await nextBtn.isVisible({ timeout: 1_000 }).catch(() => false);
+      if (!visible) break;
+      const disabled = await nextBtn.isDisabled().catch(() => true);
+      if (disabled) break;
+
+      await nextBtn.click();
+      await this.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {
+        /* if no network activity, table may already be updated client-side */
+      });
+      await this.page.waitForTimeout(300);
+    }
+
+    if (allRows.length === MAX_PAGES * 10) {
+      this.logger.warn('MAX_PAGES safety cap hit — additional jobs may exist', { maxPages: MAX_PAGES });
+    }
+
+    const filtered = allRows.filter((j) =>
       j.languagesNeeded.some((l) => (SUPPORTED_LANGUAGES as readonly string[]).includes(l))
     );
-    if (rows.length >= 10) {
-      this.logger.warn('Job Board page may have additional pages — pagination not yet implemented', {
-        rowsOnPage: rows.length,
-        risk: 'jobs beyond page 1 will be missed',
-      });
-    }
+
     this.logger.info('job scan complete', {
-      total: rows.length,
+      totalAcrossPages: allRows.length,
       candidates: filtered.length,
       candidateIds: filtered.map((j) => j.id),
     });

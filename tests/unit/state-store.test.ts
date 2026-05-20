@@ -1,0 +1,59 @@
+import { describe, it, expect } from 'vitest';
+import { mkdtempSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
+import path from 'path';
+import { StateStore } from '../../src/storage/state.js';
+
+function newStore(): { store: StateStore; file: string } {
+  const dir = mkdtempSync(path.join(tmpdir(), 'state-'));
+  const file = path.join(dir, 'state.json');
+  return { store: new StateStore(file), file };
+}
+
+describe('StateStore', () => {
+  it('starts empty when no file exists', async () => {
+    const { store } = newStore();
+    await store.load();
+    expect(store.isProcessed('any')).toBe(false);
+  });
+
+  it('marks job as FULL', async () => {
+    const { store, file } = newStore();
+    await store.load();
+    store.markProcessed('61514', { 'lo-LA': 'a@eqho.com' });
+    await store.save();
+    expect(store.isProcessed('61514')).toBe(true);
+    expect(existsSync(file)).toBe(true);
+  });
+
+  it('marks job as PARTIAL (still re-processable)', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markPartial('61515', { 'lo-LA': 'a@eqho.com' }, ['km-KH']);
+    expect(store.isProcessed('61515')).toBe(false);
+    expect(store.getProcessStatus('61515')).toBe('PARTIAL');
+  });
+
+  it('round-robin counter increments', async () => {
+    const { store } = newStore();
+    await store.load();
+    expect(store.getRRIndex('lo-LA:rule2')).toBe(0);
+    store.incrementRR('lo-LA:rule2');
+    expect(store.getRRIndex('lo-LA:rule2')).toBe(1);
+    store.incrementRR('lo-LA:rule2');
+    expect(store.getRRIndex('lo-LA:rule2')).toBe(2);
+  });
+
+  it('persists and reloads state', async () => {
+    const { store, file } = newStore();
+    await store.load();
+    store.markProcessed('61514', { 'lo-LA': 'a@eqho.com' });
+    store.incrementRR('lo-LA:rule2');
+    await store.save();
+
+    const store2 = new (await import('../../src/storage/state.js')).StateStore(file);
+    await store2.load();
+    expect(store2.isProcessed('61514')).toBe(true);
+    expect(store2.getRRIndex('lo-LA:rule2')).toBe(1);
+  });
+});

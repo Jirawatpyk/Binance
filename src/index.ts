@@ -11,6 +11,7 @@ import { Scheduler } from './core/scheduler.js';
 import { retry } from './core/retry.js';
 import { ProcessLock } from './core/lock.js';
 import { captureScreenshot } from './core/screenshot.js';
+import { GoogleChatNotifier } from './notifications/google-chat.js';
 import type { SupportedLanguage } from './types/index.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
@@ -25,6 +26,8 @@ async function main(): Promise<void> {
     logsDir: settings.storage.logsDir,
     rotateDays: settings.logging.rotateDays,
   });
+
+  const notifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, logger);
 
   const username = process.env.TMS_USERNAME;
   const password = process.env.TMS_PASSWORD;
@@ -50,11 +53,19 @@ async function main(): Promise<void> {
 
   const tick = async (): Promise<void> => {
     logger.info('tick started');
-    await retry(
-      () => session.ensureLoggedIn(),
-      { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
-      (err, attempt) => logger.warn('login attempt failed', { attempt, error: (err as Error).message })
-    );
+    try {
+      await retry(
+        () => session.ensureLoggedIn(),
+        { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
+        (err, attempt) => logger.warn('login attempt failed', { attempt, error: (err as Error).message })
+      );
+    } catch (err) {
+      await notifier.notify(
+        `Login failed after ${settings.assignment.maxRetries + 1} attempts: ${(err as Error).message}`,
+        'error'
+      );
+      throw err;
+    }
     const candidates = await scanner.scan();
     for (const job of candidates) {
       if (state.isProcessed(job.id)) continue;
@@ -107,6 +118,7 @@ async function main(): Promise<void> {
       } catch (err) {
         logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
         await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`);
+        await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
       }
     }
     logger.info('tick complete');
@@ -125,11 +137,16 @@ async function main(): Promise<void> {
     await session.close();
     await lock.release();
     logger.info('shutdown complete');
+    await notifier.notify('Bot stopped', 'info');
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
+  await notifier.notify(
+    `Bot started (dryRun=${settings.assignment.dryRun}, interval=${settings.polling.intervalMinutes}min)`,
+    'info'
+  );
   scheduler.start();
 }
 

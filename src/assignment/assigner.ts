@@ -32,8 +32,9 @@ export class Assigner {
       });
     }
 
+    const safeEmail = translatorEmail.replace(/"/g, '\\"');
     const rowAssign = modal
-      .locator(`xpath=//*[contains(text(),"${translatorEmail}")]/ancestor::*[self::div or self::tr][1]//button[contains(text(),"Assign")]`)
+      .locator(`xpath=//*[contains(text(),"${safeEmail}")]/ancestor::*[self::div or self::tr][1]//button[contains(text(),"Assign")]`)
       .first();
     await rowAssign.click();
     await modal.waitFor({ state: 'hidden', timeout: 10_000 });

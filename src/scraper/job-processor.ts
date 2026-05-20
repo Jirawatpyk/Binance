@@ -2,8 +2,6 @@ import type { Page } from 'playwright';
 import type { JobDetail, SupportedLanguage, TargetLanguage } from '../types/index.js';
 import type winston from 'winston';
 
-const SUPPORTED: SupportedLanguage[] = ['lo-LA', 'km-KH'];
-
 export class JobProcessor {
   constructor(private page: Page, private logger: winston.Logger) {}
 

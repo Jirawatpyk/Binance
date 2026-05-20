@@ -1,20 +1,27 @@
 import type { Page } from 'playwright';
-import type { Job, SupportedLanguage } from '../types/index.js';
+import { type Job, type SupportedLanguage, SUPPORTED_LANGUAGES } from '../types/index.js';
 import type winston from 'winston';
 
-const SUPPORTED: SupportedLanguage[] = ['lo-LA', 'km-KH'];
 const JOB_BOARD_URL = 'https://www.translationtms.com/job-board';
 
 export class JobScanner {
   constructor(private page: Page, private logger: winston.Logger) {}
 
   async scan(): Promise<Job[]> {
+    // TODO(phase-2): Implement pagination — spec §3.3 requires it for total > 10.
+    // Current behavior: only page 1 is parsed; warning logged if rows >= 10.
     await this.page.goto(JOB_BOARD_URL, { waitUntil: 'domcontentloaded' });
     await this.page.waitForSelector('table, [role="table"]', { timeout: 15_000 });
     const rows = await this.parseRows();
     const filtered = rows.filter((j) =>
-      j.languagesNeeded.some((l) => (SUPPORTED as string[]).includes(l))
+      j.languagesNeeded.some((l) => (SUPPORTED_LANGUAGES as readonly string[]).includes(l))
     );
+    if (rows.length >= 10) {
+      this.logger.warn('Job Board page may have additional pages — pagination not yet implemented', {
+        rowsOnPage: rows.length,
+        risk: 'jobs beyond page 1 will be missed',
+      });
+    }
     this.logger.info('job scan complete', {
       total: rows.length,
       candidates: filtered.length,

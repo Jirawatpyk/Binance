@@ -13,7 +13,9 @@ storage:
   cookiesPath: ./data/cookies.json
 
 assignment:
-  dryRun: false
+  # Safety default: dry-run is ON. Flip to false ONLY after verifying selectors
+  # against the real TMS DOM (see plan Task 18) and confirming dry-run logs are correct.
+  dryRun: true
   maxRetries: 3
   retryDelayMs: 5000
 

@@ -66,3 +66,5 @@ export interface AssignmentResult {
   translator?: string;
   error?: string;
 }
+
+export const SUPPORTED_LANGUAGES: readonly SupportedLanguage[] = ['lo-LA', 'km-KH'] as const;

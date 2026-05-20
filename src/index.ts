@@ -73,7 +73,9 @@ async function main(): Promise<void> {
               (err, attempt) => logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message })
             );
             assigned[lang.code] = pick.translator;
-            if (pick.useRoundRobin && pick.rrKey) state.incrementRR(pick.rrKey);
+            if (pick.useRoundRobin && pick.rrKey && !settings.assignment.dryRun) {
+              state.incrementRR(pick.rrKey);
+            }
           } catch (err) {
             failed.push(lang.code);
             logger.error('assignment failed', {
@@ -92,6 +94,14 @@ async function main(): Promise<void> {
           // Nothing to assign — all languages already had a translator (e.g., assigned manually)
           logger.info('job already fully assigned externally', { jobId: job.id });
           state.markProcessed(job.id, {});
+        } else {
+          // assigned=0, failed>0 — every attempt failed; mark PARTIAL so we retry,
+          // but log the total failure so it's visible in monitoring
+          logger.error('all language assignments failed for job', {
+            jobId: job.id,
+            failed,
+          });
+          state.markPartial(job.id, {}, failed);
         }
         await state.save();
       } catch (err) {

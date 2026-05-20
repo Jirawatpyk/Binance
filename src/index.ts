@@ -120,8 +120,9 @@ async function main(): Promise<void> {
 
   const shutdown = async (): Promise<void> => {
     scheduler.stop('shutdown');
-    await session.close();
+    await scheduler.waitForIdle(30_000);
     await state.save();
+    await session.close();
     await lock.release();
     logger.info('shutdown complete');
     process.exit(0);

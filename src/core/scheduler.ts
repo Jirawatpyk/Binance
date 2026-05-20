@@ -52,4 +52,19 @@ export class Scheduler {
     this.stopRequested = true;
     if (this.timer) clearTimeout(this.timer);
   }
+
+  get isRunning(): boolean {
+    return this.running;
+  }
+
+  async waitForIdle(timeoutMs = 30_000): Promise<void> {
+    const start = Date.now();
+    while (this.running) {
+      if (Date.now() - start > timeoutMs) {
+        this.logger.warn('scheduler waitForIdle timeout', { timeoutMs });
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  }
 }

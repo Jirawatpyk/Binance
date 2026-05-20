@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+config/settings.yml
+config/translators.yml
+data/
+logs/
+*.log
+playwright-report/
+test-results/

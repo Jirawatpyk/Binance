@@ -19,8 +19,6 @@ export class Scheduler {
   start(): void {
     this.logger.info('scheduler started', { intervalMinutes: this.config.intervalMinutes });
     this.scheduleNext(0);
-    process.on('SIGINT', () => this.stop('SIGINT'));
-    process.on('SIGTERM', () => this.stop('SIGTERM'));
   }
 
   private scheduleNext(delayMs: number): void {

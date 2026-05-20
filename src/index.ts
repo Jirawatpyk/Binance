@@ -8,6 +8,7 @@ import { JobScanner } from './scraper/job-scanner.js';
 import { JobProcessor } from './scraper/job-processor.js';
 import { Assigner } from './assignment/assigner.js';
 import { Scheduler } from './core/scheduler.js';
+import { retry } from './core/retry.js';
 import { ProcessLock } from './core/lock.js';
 import { captureScreenshot } from './core/screenshot.js';
 import type { SupportedLanguage } from './types/index.js';
@@ -49,7 +50,11 @@ async function main(): Promise<void> {
 
   const tick = async (): Promise<void> => {
     logger.info('tick started');
-    await session.ensureLoggedIn();
+    await retry(
+      () => session.ensureLoggedIn(),
+      { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
+      (err, attempt) => logger.warn('login attempt failed', { attempt, error: (err as Error).message })
+    );
     const candidates = await scanner.scan();
     for (const job of candidates) {
       if (state.isProcessed(job.id)) continue;
@@ -62,7 +67,11 @@ async function main(): Promise<void> {
           if (lang.status !== 'WAITING_TRANSLATION' && !lang.status.includes('WAITING')) continue;
           try {
             const pick = engine.pick(lang.code, detail.wordCount);
-            await assigner.assign(lang.code, pick.translator, lang.rowIndex);
+            await retry(
+              () => assigner.assign(lang.code, pick.translator, lang.rowIndex),
+              { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
+              (err, attempt) => logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message })
+            );
             assigned[lang.code] = pick.translator;
             if (pick.useRoundRobin && pick.rrKey) state.incrementRR(pick.rrKey);
           } catch (err) {
@@ -79,6 +88,10 @@ async function main(): Promise<void> {
           state.markProcessed(job.id, assigned);
         } else if (Object.keys(assigned).length > 0) {
           state.markPartial(job.id, assigned, failed);
+        } else if (failed.length === 0) {
+          // Nothing to assign — all languages already had a translator (e.g., assigned manually)
+          logger.info('job already fully assigned externally', { jobId: job.id });
+          state.markProcessed(job.id, {});
         }
         await state.save();
       } catch (err) {

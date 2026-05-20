@@ -37,6 +37,14 @@ export class Assigner {
       .first();
     await rowAssign.click();
     await modal.waitFor({ state: 'hidden', timeout: 10_000 });
+    const updatedTranslator = (await row.locator('td').nth(2).textContent() ?? '').trim();
+    if (!updatedTranslator || updatedTranslator === '-') {
+      throw new AssignmentFailedError('Row not updated after modal closed', {
+        language,
+        translatorEmail,
+        rowIndex,
+      });
+    }
     this.logger.info('assignment submitted', { language, translatorEmail });
   }
 }

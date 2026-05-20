@@ -1,6 +1,6 @@
 import { promises as fs } from 'fs';
 import path from 'path';
-import type { State, SupportedLanguage } from '../types/index.js';
+import type { State, SupportedLanguage, ProcessedJobEntry } from '../types/index.js';
 
 export class StateStore {
   private state: State = { processedJobs: {}, roundRobinCounters: {} };
@@ -37,7 +37,7 @@ export class StateStore {
     return this.state.processedJobs[jobId]?.status;
   }
 
-  getProcessedEntry(jobId: string) {
+  getProcessedEntry(jobId: string): ProcessedJobEntry | undefined {
     return this.state.processedJobs[jobId];
   }
 

@@ -13,7 +13,7 @@ export class JobProcessor {
     const wordCount = await this.readWordCount();
     const waitingTab = this.page.locator('text=Waiting').first();
     if (await waitingTab.isVisible()) await waitingTab.click();
-    await this.page.waitForTimeout(500);
+    await this.page.waitForSelector('table tbody tr', { timeout: 10_000 });
     const languages = await this.parseLanguageRows();
     this.logger.info('job detail parsed', { jobId, wordCount, languages: languages.map((l) => l.code) });
     return { jobId, wordCount, targetLanguages: languages };

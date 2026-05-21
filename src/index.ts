@@ -29,13 +29,6 @@ async function main(): Promise<void> {
 
   const notifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, logger);
 
-  const username = process.env.TMS_USERNAME;
-  const password = process.env.TMS_PASSWORD;
-  if (!username || !password) {
-    logger.error('TMS_USERNAME / TMS_PASSWORD missing from environment');
-    process.exit(1);
-  }
-
   const lock = new ProcessLock(LOCK_PATH);
   await lock.acquire();
   logger.info('process lock acquired', { lockPath: LOCK_PATH });
@@ -43,7 +36,7 @@ async function main(): Promise<void> {
   const state = new StateStore(settings.storage.statePath);
   await state.load();
 
-  const session = new AuthSession(settings, { username, password }, logger);
+  const session = new AuthSession(settings, logger);
   const page = await session.start();
 
   const engine = new AssignmentEngine(translators, state);

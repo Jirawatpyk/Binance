@@ -25,18 +25,22 @@ export class Assigner {
     await assignBtn.click();
     const modal = this.page.locator('[role="dialog"], .modal').first();
     await modal.waitFor({ state: 'visible', timeout: 10_000 });
-    const userRow = modal.locator(`text=${translatorEmail}`).first();
-    if (!(await userRow.isVisible({ timeout: 5_000 }).catch(() => false))) {
+
+    // Modal renders the eligible translators as an Ant Design List
+    // (ul.ant-list-items > li.ant-list-item), each item containing the
+    // translator email and its own "Assign" button.
+    const translatorAssignBtn = modal
+      .locator('li.ant-list-item')
+      .filter({ hasText: translatorEmail })
+      .locator('button:has-text("Assign")')
+      .first();
+    if (!(await translatorAssignBtn.isVisible({ timeout: 5_000 }).catch(() => false))) {
       throw new TranslatorNotFoundError(`Translator ${translatorEmail} not in popup`, {
         language,
       });
     }
 
-    const safeEmail = translatorEmail.replace(/"/g, '\\"');
-    const rowAssign = modal
-      .locator(`xpath=//*[contains(text(),"${safeEmail}")]/ancestor::*[self::div or self::tr][1]//button[contains(text(),"Assign")]`)
-      .first();
-    await rowAssign.click();
+    await translatorAssignBtn.click();
     await modal.waitFor({ state: 'hidden', timeout: 10_000 });
     const updatedTranslator = (await row.locator('td').nth(2).textContent() ?? '').trim();
     if (!updatedTranslator || updatedTranslator === '-') {

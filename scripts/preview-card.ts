@@ -1,23 +1,36 @@
 import 'dotenv/config';
-import { buildAssignmentSummaryCard } from '../src/notifications/google-chat.js';
+import { buildAssignmentSummaryCard, buildDailySummaryCard } from '../src/notifications/google-chat.js';
 
-// Sends a sample assignment-summary card to Google Chat so the new card design
-// can be eyeballed in the real client. Run: npx tsx scripts/preview-card.ts
-const url = process.env.GOOGLE_CHAT_WEBHOOK_URL;
+// Sends sample cards to Google Chat so the card designs can be eyeballed in the
+// real client. Prefers GOOGLE_CHAT_TEST_WEBHOOK_URL (a throwaway space) so
+// previews never hit the production space. Run: npx tsx scripts/preview-card.ts
+const url = process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL ?? process.env.GOOGLE_CHAT_WEBHOOK_URL;
 if (!url) {
-  console.error('GOOGLE_CHAT_WEBHOOK_URL not set in .env');
+  console.error('Set GOOGLE_CHAT_TEST_WEBHOOK_URL (or GOOGLE_CHAT_WEBHOOK_URL) in .env');
   process.exit(1);
 }
 
-const payload = buildAssignmentSummaryCard([
-  { jobId: '62464', name: 'Binance Finance App — Q2 Localization', wordCount: 340, assigned: { 'lo-LA': 'LO_T1@eqho.com' } },
-  { jobId: '62466', name: 'Compliance Notice Update', wordCount: 128, assigned: { 'km-KH': 'kh_e3@eqho.com' } },
-  { jobId: '62470', name: 'Wallet Onboarding Flow', wordCount: 1520, assigned: { 'lo-LA': 'LO_T3@eqho.com', 'km-KH': 'kh_e3@eqho.com' } },
-]);
+async function send(label: string, payload: unknown): Promise<void> {
+  const res = await fetch(url as string, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json; charset=UTF-8' },
+    body: JSON.stringify(payload),
+  });
+  console.log(label, 'HTTP', res.status, res.ok ? 'OK' : await res.text());
+}
 
-const res = await fetch(url, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json; charset=UTF-8' },
-  body: JSON.stringify(payload),
-});
-console.log('HTTP', res.status, res.ok ? 'OK — check Google Chat' : await res.text());
+await send(
+  'assignment-card',
+  buildAssignmentSummaryCard([
+    { jobId: '62464', name: 'Binance Finance App — Q2 Localization', wordCount: 340, assigned: { 'lo-LA': 'LO_T1@eqho.com' } },
+    { jobId: '62466', name: 'Compliance Notice Update', wordCount: 128, assigned: { 'km-KH': 'kh_e3@eqho.com' } },
+    { jobId: '62470', name: 'Wallet Onboarding Flow', wordCount: 1520, assigned: { 'lo-LA': 'LO_T3@eqho.com', 'km-KH': 'kh_e3@eqho.com' } },
+  ])
+);
+
+await send(
+  'daily-summary-card',
+  buildDailySummaryCard({ date: '2026-05-27', assigned: 7, jobsAssigned: 5, failed: 1, authEpisodes: 0, uptimeHours: 12.3 })
+);
+
+console.log('Done — check the test Google Chat space.');

@@ -1,4 +1,5 @@
 import type winston from 'winston';
+import type { DailySummaryStats } from '../types/index.js';
 
 export type Severity = 'info' | 'warn' | 'error';
 
@@ -87,6 +88,53 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
   };
 }
 
+/**
+ * The daily heartbeat as a card matching the assignment-summary style: a
+ * `💓 Daily Summary` header (date as subtitle) and one decoratedText row per
+ * metric — assignments, issues, and uptime — each with a leading icon. The
+ * failure count turns red when non-zero so problems stand out at a glance.
+ */
+export function buildDailySummaryCard(s: DailySummaryStats): unknown {
+  const failed =
+    s.failed > 0 ? `<font color="#d93025"><b>${s.failed}</b> failed</font>` : '<b>0</b> failed';
+  const widgets = [
+    {
+      decoratedText: {
+        startIcon: { knownIcon: 'MULTIPLE_PEOPLE' },
+        topLabel: 'Assigned today',
+        text: `<b>${s.assigned}</b> language(s) across <b>${s.jobsAssigned}</b> job(s)`,
+        wrapText: true,
+      },
+    },
+    {
+      decoratedText: {
+        startIcon: { knownIcon: 'DESCRIPTION' },
+        topLabel: 'Issues',
+        text: `${failed}  ·  <b>${s.authEpisodes}</b> auth episode(s)`,
+        wrapText: true,
+      },
+    },
+    {
+      decoratedText: {
+        startIcon: { knownIcon: 'CLOCK' },
+        topLabel: 'Uptime',
+        text: `<b>${s.uptimeHours}h</b>`,
+      },
+    },
+  ];
+  return {
+    cardsV2: [
+      {
+        cardId: `summary-${Date.now()}`,
+        card: {
+          header: { title: '💓 Daily Summary', subtitle: esc(s.date) },
+          sections: [{ widgets }],
+        },
+      },
+    ],
+  };
+}
+
 export class GoogleChatNotifier {
   constructor(
     private webhookUrl: string | undefined,
@@ -102,6 +150,11 @@ export class GoogleChatNotifier {
   async notifyAssignments(jobs: AssignmentSummaryItem[]): Promise<void> {
     if (jobs.length === 0) return;
     await this.post(buildAssignmentSummaryCard(jobs), 'info');
+  }
+
+  /** Fire-and-forget daily heartbeat summary card. Never throws. */
+  async notifyDailySummary(stats: DailySummaryStats): Promise<void> {
+    await this.post(buildDailySummaryCard(stats), 'info');
   }
 
   private async post(payload: unknown, severity: Severity): Promise<void> {

@@ -94,7 +94,7 @@ async function main(): Promise<void> {
 
     // Daily summary is a heartbeat — send it regardless of auth/work state.
     if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
-      await notifier.notify(health.buildDailySummary(), 'info');
+      await notifier.notifyDailySummary(health.dailySummaryStats());
       health.markDailySummarySent();
       // Daily maintenance alongside the heartbeat. Best-effort: never let a
       // maintenance error abort the tick.

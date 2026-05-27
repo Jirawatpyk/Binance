@@ -88,15 +88,20 @@ describe('HealthMonitor', () => {
     expect(m2.isDailySummaryDue(new Date(2026, 4, 7, 10, 0), '09:00')).toBe(false);
   });
 
-  it('buildDailySummary includes counts', () => {
+  it('dailySummaryStats returns structured counts and uptime', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
     monitor.recordAssignment(true);
     monitor.recordJobAssigned();
     monitor.recordAuthEpisode();
-    const text = monitor.buildDailySummary(new Date(2026, 4, 7, 9, 0));
-    expect(text).toMatch(/assigned/i);
-    expect(text).toContain('1');
-    expect(text).toContain('assigned 1 language(s) across 1 job(s)');
+    const s = monitor.dailySummaryStats(new Date(2026, 4, 7, 9, 0));
+    expect(s).toEqual({
+      date: '2026-05-07',
+      assigned: 1,
+      jobsAssigned: 1,
+      failed: 0,
+      authEpisodes: 1,
+      uptimeHours: 1, // 08:00 → 09:00
+    });
   });
 
   it('defaults jobsAssigned to 0 when loading a pre-jobsAssigned health.json', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTextCard, buildAssignmentSummaryCard } from '../../src/notifications/google-chat.js';
+import { buildTextCard, buildAssignmentSummaryCard, buildDailySummaryCard } from '../../src/notifications/google-chat.js';
 
 // Narrow helper to reach into the cardsV2 payload without `any` everywhere.
 function card(payload: unknown): {
@@ -117,5 +117,30 @@ describe('buildAssignmentSummaryCard', () => {
     // intentional markup must survive (not escaped)
     expect(text).toContain('<b>');
     expect(text).toContain('<br>');
+  });
+});
+
+describe('buildDailySummaryCard', () => {
+  const stats = { date: '2026-05-27', assigned: 5, jobsAssigned: 3, failed: 0, authEpisodes: 1, uptimeHours: 12.3 };
+
+  it('has the heartbeat header with date subtitle and three metric rows', () => {
+    const c = card(buildDailySummaryCard(stats));
+    expect(c.card.header.title).toBe('💓 Daily Summary');
+    expect(c.card.header.subtitle).toBe('2026-05-27');
+    expect(c.card.sections[0].widgets.filter((w) => w.decoratedText)).toHaveLength(3);
+  });
+
+  it('renders counts and uptime', () => {
+    const text = allText(card(buildDailySummaryCard(stats)));
+    expect(text).toContain('<b>5</b> language(s) across <b>3</b> job(s)');
+    expect(text).toContain('<b>1</b> auth episode(s)');
+    expect(text).toContain('<b>12.3h</b>');
+  });
+
+  it('keeps failures black at zero and red when non-zero', () => {
+    expect(allText(card(buildDailySummaryCard(stats)))).toContain('<b>0</b> failed');
+    const withFailures = allText(card(buildDailySummaryCard({ ...stats, failed: 4 })));
+    expect(withFailures).toContain('#d93025');
+    expect(withFailures).toContain('<b>4</b> failed');
   });
 });

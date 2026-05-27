@@ -69,6 +69,16 @@ export interface State {
   roundRobinCounters: Record<string, number>;
 }
 
+/** Structured daily-heartbeat figures, used to render the summary card. */
+export interface DailySummaryStats {
+  date: string;
+  assigned: number; // language-level assignments today
+  jobsAssigned: number; // jobs that received at least one assignment today
+  failed: number;
+  authEpisodes: number;
+  uptimeHours: number;
+}
+
 export interface AssignmentResult {
   language: SupportedLanguage;
   success: boolean;

@@ -1,6 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { localDateString, isNewDay, isDailySummaryDue } from './health-utils.js';
+import type { DailySummaryStats } from '../types/index.js';
 
 interface TodayCounters {
   date: string;
@@ -101,13 +102,20 @@ export class HealthMonitor {
     this.state.lastDailySummaryDate = localDateString(now);
   }
 
-  buildDailySummary(now: Date = new Date()): string {
+  /** Structured figures for the daily heartbeat card. */
+  dailySummaryStats(now: Date = new Date()): DailySummaryStats {
     const t = this.state.today;
-    const uptimeH = ((now.getTime() - new Date(this.state.startedAt).getTime()) / 3_600_000).toFixed(1);
-    return (
-      `Daily summary (${t.date}): assigned ${t.assigned} language(s) across ${t.jobsAssigned} job(s), ` +
-      `failed ${t.failed}, auth episodes ${t.authEpisodes}, uptime ${uptimeH}h`
+    const uptimeHours = Number(
+      ((now.getTime() - new Date(this.state.startedAt).getTime()) / 3_600_000).toFixed(1)
     );
+    return {
+      date: t.date,
+      assigned: t.assigned,
+      jobsAssigned: t.jobsAssigned,
+      failed: t.failed,
+      authEpisodes: t.authEpisodes,
+      uptimeHours,
+    };
   }
 
   snapshot(): Readonly<HealthState> {

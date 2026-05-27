@@ -49,13 +49,14 @@ export class JobScanner {
   // -------------------------------------------------------------------------
 
   async scan(): Promise<Job[]> {
-    // Navigate fresh to the Job Board. Use domcontentloaded, not networkidle —
-    // this Ant SPA polls continuously, so networkidle can stall; an explicit
-    // table wait below is the real readiness signal.
-    await this.page.goto(JOB_BOARD_URL, { waitUntil: 'domcontentloaded' });
+    // Navigate fresh to the Job Board. networkidle lets the Ant SPA finish
+    // hydrating (its .ant-select filters mount only after the JS settles —
+    // domcontentloaded returns too early and setStatusFilter then finds no
+    // .ant-select).
+    await this.page.goto(JOB_BOARD_URL, { waitUntil: 'networkidle' });
     // The board table can take ~15-20s to render when the site is slow (observed
-    // live), so 15s was too tight; wait generously and let the spinner settle
-    // before the filter/scan steps read the table.
+    // live), so the original 15s was too tight; wait generously and let the
+    // spinner settle before the filter/scan steps read the table.
     await this.page.waitForSelector('table, [role="table"]', { timeout: 30_000 });
     await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 15_000 }).catch(() => {});
 

@@ -62,4 +62,20 @@ describe('buildAssignmentSummaryCard', () => {
     expect(text).toContain('lo-LA → lo@eqho.com');
     expect(text).toContain('km-KH → kh@eqho.com');
   });
+
+  it('escapes HTML-special characters in job id, name, and translator while keeping intentional markup', () => {
+    const c = card(
+      buildAssignmentSummaryCard([
+        { jobId: 'J<1>', name: 'Finance & Loans <Test>', wordCount: 5, assigned: { 'lo-LA': 'user&hack@eqho.com' } },
+      ])
+    );
+    const text = c.card.sections[0].widgets[0].textParagraph?.text ?? '';
+    expect(text).toContain('Job J&lt;1&gt;');
+    expect(text).toContain('Finance &amp; Loans &lt;Test&gt;');
+    expect(text).toContain('user&amp;hack@eqho.com');
+    // intentional markup must survive (not escaped)
+    expect(text).toContain('<b>');
+    expect(text).toContain('<br>');
+    expect(text).toContain('&nbsp;');
+  });
 });

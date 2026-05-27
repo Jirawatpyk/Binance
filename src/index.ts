@@ -139,8 +139,8 @@ async function main(): Promise<void> {
       }
     }
 
+    const assignedThisTick: AssignmentSummaryItem[] = [];
     try {
-      const assignedThisTick: AssignmentSummaryItem[] = [];
       const candidates = await scanner.scan();
       if (candidates.length === 0) {
         health.recordZeroScan();
@@ -254,8 +254,6 @@ async function main(): Promise<void> {
           await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
-      // Anti-spam: one summary card per cycle for all jobs assigned this tick.
-      await notifier.notifyAssignments(assignedThisTick);
       health.recordTickSuccess();
     } catch (err) {
       if (isBrowserDeadError(err)) {
@@ -275,6 +273,11 @@ async function main(): Promise<void> {
         }
       }
     }
+
+    // Anti-spam: one summary card per cycle for all jobs assigned this tick —
+    // sent even if the tick later threw (browser crash mid-loop) so assignments
+    // are never silently dropped.
+    await notifier.notifyAssignments(assignedThisTick);
 
     try {
       await health.save();

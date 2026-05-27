@@ -344,3 +344,155 @@ The 19 returned jobs were all created on 2026-05-25 or 2026-05-27, confirming th
 
 ### Safety
 No Assign button was clicked. No job state was mutated. All interactions were read-only.
+
+---
+
+## Real Assign modal inspection (Task 19 prep)
+
+Date: 2026-05-27
+Session: cookie-based (data/cookies.json)
+Script: scripts/inspect-modal.ts (deleted after run)
+
+### Target job
+
+| Field | Value |
+|-------|-------|
+| Job ID | 48456 |
+| Word Count | 48 |
+| Language | km-KH (Khmer (Cambodia)) |
+| Status of row | WAITING_TRANSLATION |
+| Translator cell (td[2]) | `-` (empty — no translator assigned) |
+| Tab found in | "Waiting" tab |
+
+### Modal title
+
+`Assign Strings - km-KH`
+
+Context shown inside modal:
+- **Current Step:** WAITING_TRANSLATION
+- **Required Role:** TRANSLATOR
+- Introductory text: "Select a user to allocate all strings in km-KH:"
+
+### Real km-KH translator emails found
+
+The modal listed **5 translators** (all with role TRANSLATOR, locale km-KH):
+
+1. `kh_e2@eqho.com`
+2. `kh_t1@eqho.com`
+3. `kh_e3@eqho.com`
+4. `kh_t2@eqho.com`
+5. `kh_t3@eqho.com`
+
+These are the real km-KH translator accounts available for assignment. All carry badge tags `TRANSLATOR` + `km-KH`.
+
+### Modal entry DOM structure
+
+The modal uses an **Ant Design List** (`ul.ant-list-items`), not a table. Each translator is rendered as `<li class="ant-list-item">`:
+
+```html
+<!-- One list item (sample: kh_e2@eqho.com) — outerHTML of meta-content div -->
+<div class="ant-list-item-meta-content">
+  <h4 class="ant-list-item-meta-title">kh_e2@eqho.com (TRANSLATOR)</h4>
+  <div class="ant-list-item-meta-description">
+    <div>
+      <div>kh_e2@eqho.com</div>
+      <div class="mt-1">
+        <span class="ant-tag ant-tag-blue !mt-2 !whitespace-break-spaces css-1tp18n3">TRANSLATOR</span>
+        <span class="ant-tag ant-tag-green !mt-2 !whitespace-break-spaces css-1tp18n3">km-KH</span>
+      </div>
+    </div>
+  </div>
+</div>
+```
+
+Full structure per entry:
+```
+li.ant-list-item
+  div.ant-list-item-meta
+    div.ant-list-item-meta-avatar   ← user icon avatar
+    div.ant-list-item-meta-content
+      h4.ant-list-item-meta-title   ← "kh_e2@eqho.com (TRANSLATOR)"
+      div.ant-list-item-meta-description
+        div > div                   ← email text node "kh_e2@eqho.com"
+        div.mt-1 > span.ant-tag     ← "TRANSLATOR" badge
+        div.mt-1 > span.ant-tag     ← "km-KH" badge
+  button.ant-btn.ant-btn-primary.ant-btn-sm  ← Assign button (at li level, outside meta)
+```
+
+The Assign button is a **sibling** of `div.ant-list-item-meta`, both inside the `li.ant-list-item`. It is **NOT** a descendant of the meta-content div where the email text lives.
+
+### Verdict on assigner.ts selectors
+
+#### Current XPath (BROKEN)
+
+```
+//*[contains(text(),"kh_e2@eqho.com")]/ancestor::*[self::div or self::tr][1]//button[contains(text(),"Assign")]
+```
+
+**Result:** `count=0`, `isVisible=false` → **BROKEN**
+
+**Why it fails:** The email text (`kh_e2@eqho.com`) lives inside a `<div>` element. The XPath correctly walks up to the first ancestor `div` — but that div is `div.ant-list-item-meta-content`, which does NOT contain the Assign button. The button is a sibling of `div.ant-list-item-meta` at the `li` level, making it invisible to a `//button` descendant search from `div.ant-list-item-meta-content`.
+
+#### Text locator check
+
+`modal.locator('text=kh_e2@eqho.com').count()` → **2** (the email appears in both the `h4` title and the `div` description) → locator finds it but XPath ancestor search goes to wrong container.
+
+#### Corrected selector
+
+**Option A — XPath targeting `li.ant-list-item` ancestor:**
+```xpath
+//*[contains(text(),"EMAIL")]/ancestor::li[contains(@class,"ant-list-item")]//button[contains(text(),"Assign")]
+```
+
+**Option B — Playwright locator (preferred, more readable):**
+```typescript
+modal.locator('li.ant-list-item')
+  .filter({ hasText: translatorEmail })
+  .locator('button:has-text("Assign")')
+  .first()
+```
+
+Option B is the recommended replacement because:
+- It uses Playwright's `filter({ hasText })` which handles the email appearing in nested elements correctly
+- It explicitly scopes to `li.ant-list-item` (the correct container)
+- It avoids XPath ancestor ambiguity
+- `count()` verified: `modal.locator('button:has-text("Assign")').count()` = **5** (one per translator)
+
+**IMPORTANT — Do NOT click any of these Assign buttons.** This verification was performed with `.count()` and `.isVisible()` only. The buttons were confirmed to exist and be visible; none were clicked.
+
+#### Updated assigner.ts selector recommendation
+
+Replace in `src/assignment/assigner.ts`:
+
+```typescript
+// BEFORE (broken):
+const assignBtn = modal
+  .locator(`xpath=//*[contains(text(),"${safeEmail}")]/ancestor::*[self::div or self::tr][1]//button[contains(text(),"Assign")]`)
+  .first();
+
+// AFTER (corrected):
+const assignBtn = modal
+  .locator('li.ant-list-item')
+  .filter({ hasText: translatorEmail })
+  .locator('button:has-text("Assign")')
+  .first();
+```
+
+Or using the corrected XPath if XPath is required:
+```typescript
+const assignBtn = modal
+  .locator(`xpath=//*[contains(text(),"${safeEmail}")]/ancestor::li[contains(@class,"ant-list-item")]//button[contains(text(),"Assign")]`)
+  .first();
+```
+
+### Screenshots captured
+
+- `logs/screenshots/task-19/00-job-board-initial.png` — Job board with km-KH + Available to Claim filter
+- `logs/screenshots/task-19/01-km-kh-results.png` — km-KH filtered results
+- `logs/screenshots/task-19/02-target-job-detail.png` — Job 48456 detail, Waiting tab, km-KH WAITING_TRANSLATION row visible
+- `logs/screenshots/task-19/assign-modal-real.png` — **Real Assign modal with 5 translators listed**
+- `logs/screenshots/task-19/03-modal-closed.png` — Modal closed after Escape
+
+### Safety
+
+**No inner Assign button was clicked at any stage.** The modal was inspected via DOM reading, `.count()`, and `.isVisible()` only. The modal was closed via `page.keyboard.press('Escape')`. Confirmed `modal.isVisible() = false` after close. No job state was mutated.

@@ -160,7 +160,13 @@ async function main(): Promise<void> {
       }
       for (const job of candidates) {
         const entry = state.getProcessedEntry(job.id);
-        if (entry?.status === 'FULL' || entry?.status === 'ABANDONED') continue;
+        // Skip only jobs we've given up on. Do NOT skip FULL jobs: a job's lo-LA
+        // and km-KH rows can become claimable at different times, and the board
+        // only re-surfaces a job (Available to Claim + language filter) when it
+        // still has claimable work. Re-open it and let the live Waiting-tab read
+        // decide which languages remain — an already-assigned row is no longer
+        // WAITING_TRANSLATION, so isLanguageAssignable skips it (no double-assign).
+        if (entry?.status === 'ABANDONED') continue;
         if (
           entry?.status === 'PARTIAL' &&
           (entry.retryCount ?? 0) >= settings.assignment.maxPartialRetries

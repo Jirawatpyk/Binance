@@ -52,10 +52,14 @@ export class StateStore {
   }
 
   markProcessed(jobId: string, assigned: Partial<Record<SupportedLanguage, string>>): void {
+    // Merge with any prior assignment: a job's languages can be assigned across
+    // separate ticks (e.g. km-KH now, lo-LA once it becomes claimable), so
+    // re-marking FULL must not drop the earlier language.
+    const prev = this.state.processedJobs[jobId];
     this.state.processedJobs[jobId] = {
       processedAt: new Date().toISOString(),
       status: 'FULL',
-      assigned,
+      assigned: { ...prev?.assigned, ...assigned },
     };
     this.dirty = true;
   }

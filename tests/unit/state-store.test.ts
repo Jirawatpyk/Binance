@@ -105,6 +105,17 @@ describe('StateStore', () => {
     expect(store.isProcessed('p2')).toBe(false);
   });
 
+  it('markProcessed merges assigned across separate ticks (km-KH then lo-LA)', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markProcessed('m1', { 'km-KH': 'kh_e3@eqho.com' });
+    // job re-opens later when lo-LA becomes claimable; re-marking FULL must keep km-KH
+    store.markProcessed('m1', { 'lo-LA': 'LO_T4@eqho.com' });
+    const e = store.getProcessedEntry('m1');
+    expect(e?.status).toBe('FULL');
+    expect(e?.assigned).toEqual({ 'km-KH': 'kh_e3@eqho.com', 'lo-LA': 'LO_T4@eqho.com' });
+  });
+
   it('markPartial accumulates assigned across retries', async () => {
     const { store } = newStore();
     await store.load();

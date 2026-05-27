@@ -325,12 +325,29 @@ export class JobScanner {
       }
 
       await nextBtn.click();
-      await this.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {
-        // Client-side pagination — no network activity expected
-      });
-      // Wait for spinner to clear after page change
+      // Wait for the spinner to clear, then poll until the visible row-id
+      // signature actually differs from the page we just left — instead of a
+      // fixed delay that can read a half-rendered (still page-N) table and
+      // trip the false "pagination stuck" guard. If the ids genuinely never
+      // change (real last page), this times out and the next iteration's
+      // stuck-detection breaks the loop cleanly.
       await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 5_000 }).catch(() => {});
-      await this.page.waitForTimeout(300);
+      await this.page
+        .waitForFunction(
+          (prevSig) => {
+            const ids: string[] = [];
+            for (const row of Array.from(document.querySelectorAll('table tbody tr, [role="row"]'))) {
+              const cells = row.querySelectorAll('td, [role="cell"]');
+              if (cells.length < 10) continue;
+              const idText = (cells[1]?.textContent ?? '').trim();
+              if (/^\d+$/.test(idText)) ids.push(idText);
+            }
+            return ids.sort().join(',') !== prevSig;
+          },
+          currentPageIdSignature,
+          { timeout: 5_000 }
+        )
+        .catch(() => {});
     }
 
     if (hitCap) {

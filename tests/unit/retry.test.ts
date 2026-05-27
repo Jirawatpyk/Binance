@@ -27,4 +27,13 @@ describe('retry', () => {
     await expect(retry(fn, { maxAttempts: 2, baseDelayMs: 1 }, onFail)).rejects.toThrow();
     expect(onFail).toHaveBeenCalledTimes(2);
   });
+
+  it('aborts early (no more attempts) when onAttemptFail throws', async () => {
+    const fn = vi.fn(async () => { throw new Error('deterministic'); });
+    // onAttemptFail re-throws to signal an unrecoverable error — retry must stop now.
+    await expect(
+      retry(fn, { maxAttempts: 5, baseDelayMs: 1 }, () => { throw new Error('do-not-retry'); })
+    ).rejects.toThrow('do-not-retry');
+    expect(fn).toHaveBeenCalledTimes(1); // aborted after the first failure, not 5
+  });
 });

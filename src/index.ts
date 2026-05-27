@@ -138,7 +138,8 @@ async function main(): Promise<void> {
       const candidates = await scanner.scan();
       if (candidates.length === 0) {
         health.recordZeroScan();
-        if (health.getConsecutiveZeroScans() === settings.reliability.consecutiveZeroScanAlert) {
+        const zeros = health.getConsecutiveZeroScans();
+        if (zeros > 0 && zeros % settings.reliability.consecutiveZeroScanAlert === 0) {
           await notifier.notify(
             `Scanned 0 candidates for ${settings.reliability.consecutiveZeroScanAlert} consecutive ticks — possible selector drift (or genuinely empty board)`,
             'warn'

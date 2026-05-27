@@ -13,6 +13,10 @@ import { ProcessLock } from './core/lock.js';
 import { captureScreenshot } from './core/screenshot.js';
 import { GoogleChatNotifier } from './notifications/google-chat.js';
 import type { SupportedLanguage } from './types/index.js';
+import { ReAuthManager } from './auth/reauth-manager.js';
+import { HealthMonitor } from './core/health-monitor.js';
+import { runWithWatchdog } from './core/watchdog.js';
+import { isBrowserDeadError } from './core/recovery-utils.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
 const TRANSLATORS_PATH = process.env.TRANSLATORS_PATH ?? './config/translators.yml';
@@ -37,95 +41,136 @@ async function main(): Promise<void> {
   await state.load();
 
   const session = new AuthSession(settings, logger);
-  const page = await session.start();
+  let page = await session.start();
 
   const engine = new AssignmentEngine(translators, state);
-  const scanner = new JobScanner(page, logger, settings.scan);
-  const processor = new JobProcessor(page, logger);
-  const assigner = new Assigner(page, logger, settings.assignment.dryRun);
+  let scanner = new JobScanner(page, logger, settings.scan);
+  let processor = new JobProcessor(page, logger);
+  let assigner = new Assigner(page, logger, settings.assignment.dryRun);
+
+  const rebuildPipeline = (p: typeof page): void => {
+    scanner = new JobScanner(p, logger, settings.scan);
+    processor = new JobProcessor(p, logger);
+    assigner = new Assigner(p, logger, settings.assignment.dryRun);
+  };
+
+  const health = new HealthMonitor('./data/health.json');
+  await health.load();
+
+  const reauth = new ReAuthManager({
+    ensureLoggedIn: () => session.ensureLoggedIn(),
+    notify: settings.reliability.reauth.alertOnExpiry
+      ? (t, s) => notifier.notify(t, s)
+      : async () => {},
+    logger,
+    onPause: () => health.recordAuthEpisode(),
+  });
 
   const tick = async (): Promise<void> => {
     logger.info('tick started');
-    try {
-      await retry(
-        () => session.ensureLoggedIn(),
-        { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
-        (err, attempt) => logger.warn('login attempt failed', { attempt, error: (err as Error).message })
-      );
-    } catch (err) {
-      await notifier.notify(
-        `Login failed after ${settings.assignment.maxRetries + 1} attempts: ${(err as Error).message}`,
-        'error'
-      );
-      throw err;
+    health.recordTickStart();
+
+    if (!(await reauth.ensureReady())) {
+      await health.save();
+      return; // paused awaiting manual cookie refresh
     }
-    const candidates = await scanner.scan();
-    for (const job of candidates) {
-      if (state.isProcessed(job.id)) continue;
-      try {
-        const detail = await processor.open(job.detailUrl, job.id);
-        const assigned: Partial<Record<SupportedLanguage, string>> = {};
-        const failed: SupportedLanguage[] = [];
-        for (const lang of detail.targetLanguages) {
-          if (lang.translator !== null) continue;
-          if (lang.status !== 'WAITING_TRANSLATION' && !lang.status.includes('WAITING')) continue;
-          try {
-            const pick = engine.pick(lang.code, detail.wordCount);
-            await retry(
-              () => assigner.assign(lang.code, pick.translator, lang.rowIndex),
-              { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
-              (err, attempt) => logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message })
-            );
-            assigned[lang.code] = pick.translator;
-            if (pick.useRoundRobin && pick.rrKey && !settings.assignment.dryRun) {
-              state.incrementRR(pick.rrKey);
-            }
-            if (!settings.assignment.dryRun) {
-              await notifier.notify(
-                `Assigned job ${job.id} "${job.name}" — ${lang.code} → ${pick.translator} (${detail.wordCount} words)`,
-                'info'
+
+    try {
+      const candidates = await scanner.scan();
+      for (const job of candidates) {
+        if (state.isProcessed(job.id)) continue;
+        try {
+          const detail = await processor.open(job.detailUrl, job.id);
+          const assigned: Partial<Record<SupportedLanguage, string>> = {};
+          const failed: SupportedLanguage[] = [];
+          for (const lang of detail.targetLanguages) {
+            if (lang.translator !== null) continue;
+            if (lang.status !== 'WAITING_TRANSLATION' && !lang.status.includes('WAITING')) continue;
+            try {
+              const pick = engine.pick(lang.code, detail.wordCount);
+              await retry(
+                () => assigner.assign(lang.code, pick.translator, lang.rowIndex),
+                { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
+                (err, attempt) => logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message })
               );
+              assigned[lang.code] = pick.translator;
+              health.recordAssignment(true);
+              if (pick.useRoundRobin && pick.rrKey && !settings.assignment.dryRun) {
+                state.incrementRR(pick.rrKey);
+              }
+              if (!settings.assignment.dryRun) {
+                await notifier.notify(
+                  `Assigned job ${job.id} "${job.name}" — ${lang.code} → ${pick.translator} (${detail.wordCount} words)`,
+                  'info'
+                );
+              }
+            } catch (err) {
+              failed.push(lang.code);
+              health.recordAssignment(false);
+              logger.error('assignment failed', { jobId: job.id, language: lang.code, error: (err as Error).message });
+              await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`);
             }
-          } catch (err) {
-            failed.push(lang.code);
-            logger.error('assignment failed', {
-              jobId: job.id,
-              language: lang.code,
-              error: (err as Error).message,
-            });
-            await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`);
           }
+          if (failed.length === 0 && Object.keys(assigned).length > 0) {
+            state.markProcessed(job.id, assigned);
+          } else if (Object.keys(assigned).length > 0) {
+            state.markPartial(job.id, assigned, failed);
+          } else if (failed.length === 0) {
+            logger.info('job already fully assigned externally', { jobId: job.id });
+            state.markProcessed(job.id, {});
+          } else {
+            logger.error('all language assignments failed for job', { jobId: job.id, failed });
+            state.markPartial(job.id, {}, failed);
+          }
+          await state.save();
+        } catch (err) {
+          if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
+          logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
+          await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`);
+          await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
-        if (failed.length === 0 && Object.keys(assigned).length > 0) {
-          state.markProcessed(job.id, assigned);
-        } else if (Object.keys(assigned).length > 0) {
-          state.markPartial(job.id, assigned, failed);
-        } else if (failed.length === 0) {
-          // Nothing to assign — all languages already had a translator (e.g., assigned manually)
-          logger.info('job already fully assigned externally', { jobId: job.id });
-          state.markProcessed(job.id, {});
-        } else {
-          // assigned=0, failed>0 — every attempt failed; mark PARTIAL so we retry,
-          // but log the total failure so it's visible in monitoring
-          logger.error('all language assignments failed for job', {
-            jobId: job.id,
-            failed,
-          });
-          state.markPartial(job.id, {}, failed);
-        }
-        await state.save();
-      } catch (err) {
-        logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
-        await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`);
-        await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
+      }
+      health.recordTickSuccess();
+    } catch (err) {
+      health.recordTickError();
+      if (isBrowserDeadError(err)) {
+        logger.error('browser died; recovering', { error: (err as Error).message });
+        await notifier.notify('Browser crashed — recovering', 'warn');
+        page = await session.recover();
+        rebuildPipeline(page);
+      } else {
+        logger.error('tick failed', { error: (err as Error).message });
+      }
+      if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
+        await notifier.notify(
+          `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
+          'error'
+        );
       }
     }
+
+    if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
+      await notifier.notify(health.buildDailySummary(), 'info');
+      health.markDailySummarySent();
+    }
+    await health.save();
     logger.info('tick complete');
   };
 
+  const guardedTick = (): Promise<void> =>
+    runWithWatchdog(tick, settings.reliability.watchdog.tickTimeoutMs, () => {
+      logger.error('tick hung beyond watchdog timeout; exiting for service restart', {
+        tickTimeoutMs: settings.reliability.watchdog.tickTimeoutMs,
+      });
+      void notifier
+        .notify('Bot tick hung — exiting for auto-restart', 'error')
+        .catch(() => {})
+        .finally(() => process.exit(1));
+    });
+
   const scheduler = new Scheduler(
     { intervalMinutes: settings.polling.intervalMinutes, jitterSeconds: settings.polling.jitterSeconds },
-    tick,
+    guardedTick,
     logger
   );
 
@@ -133,6 +178,7 @@ async function main(): Promise<void> {
     scheduler.stop('shutdown');
     await scheduler.waitForIdle(30_000);
     await state.save();
+    await health.save();
     await session.close();
     await lock.release();
     logger.info('shutdown complete');

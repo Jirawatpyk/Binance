@@ -93,6 +93,15 @@ async function main(): Promise<void> {
   // re-armed automatically if a refresh extends it.
   const SESSION_EXPIRY_WARN_MIN = 90;
   let expiryAlerted = false;
+  // The pre-expiry warning depends on reading auth_token from localStorage. If
+  // that read keeps failing (e.g. TMS renames the key) the warning would die
+  // silently — so we surface that too, gated so it alerts once until it recovers.
+  let expiryReadFailedAlerted = false;
+  // Persisting the refreshed token is best-effort, but a SUSTAINED failure
+  // (disk full, cookies.json locked) silently reintroduces the stale-snapshot
+  // bug. Swallow transient failures; alert once when they pile up past this.
+  const SESSION_SAVE_FAILURE_ALERT_THRESHOLD = 3;
+  let consecutiveSaveFailures = 0;
 
   // One-time maintenance at startup: bound state.json and screenshot disk usage.
   const prunedAtStart = state.pruneOldJobs(settings.scan.processedJobRetainHours);
@@ -358,27 +367,65 @@ async function main(): Promise<void> {
       //  1) Persist the current session so any JWT the app refreshed this tick
       //     survives a restart (the stale-snapshot-on-restart problem).
       //  2) Warn before the token expires so it can be refreshed proactively.
-      try {
-        const expMs = await session.getAuthExpiryMs();
-        // Persist only when the token is live, so we never overwrite the
-        // last-known-good cookies.json with a dead/unparseable snapshot.
-        if (expMs !== null && expMs > Date.now()) {
-          await session.saveSession();
-        }
-        if (expMs !== null) {
-          const minsLeft = Math.max(0, Math.round((expMs - Date.now()) / 60_000));
-          if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted) {
-            await notifier.notify(
-              `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,
+      const expMs = await session.getAuthExpiryMs().catch((e) => {
+        logger.debug('reading auth token expiry failed', { error: (e as Error).message });
+        return null;
+      });
+
+      // expMs === null means we could not read the token expiry on a session
+      // ensureLoggedIn just declared valid — token absent, key renamed, or eval
+      // failed. That silently disables BOTH save-gating and the expiry warning,
+      // so surface it (gated) rather than no-op.
+      if (expMs === null) {
+        if (!expiryReadFailedAlerted) {
+          await notifier
+            .notify(
+              'Could not read TMS session token expiry — the pre-expiry warning is not functioning. Check whether the TMS app changed its auth_token storage.',
               'warn'
-            );
-            expiryAlerted = true;
-          } else if (minsLeft > SESSION_EXPIRY_WARN_MIN) {
-            expiryAlerted = false; // token was refreshed/extended — re-arm the warning
+            )
+            .catch(() => {});
+          expiryReadFailedAlerted = true;
+        }
+      } else {
+        expiryReadFailedAlerted = false; // recovered — re-arm
+
+        // Persist only when the token is live, so we never overwrite the
+        // last-known-good cookies.json with a dead/unparseable snapshot. A
+        // single failure is swallowed; a sustained one is alerted (it silently
+        // reintroduces the stale-snapshot bug this save exists to prevent).
+        if (expMs > Date.now()) {
+          try {
+            await session.saveSession();
+            consecutiveSaveFailures = 0;
+          } catch (e) {
+            consecutiveSaveFailures += 1;
+            logger.error('persisting session failed', {
+              error: (e as Error).message,
+              consecutiveSaveFailures,
+            });
+            if (consecutiveSaveFailures === SESSION_SAVE_FAILURE_ALERT_THRESHOLD) {
+              await notifier
+                .notify(
+                  `Failed to persist the TMS session ${consecutiveSaveFailures}× in a row (cookies.json may be locked or the disk full). On restart the bot will load a stale token and likely pause for re-auth.`,
+                  'error'
+                )
+                .catch(() => {});
+            }
           }
         }
-      } catch (e) {
-        logger.warn('session maintenance failed (non-fatal)', { error: (e as Error).message });
+
+        const minsLeft = Math.max(0, Math.round((expMs - Date.now()) / 60_000));
+        if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted) {
+          await notifier
+            .notify(
+              `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,
+              'warn'
+            )
+            .catch(() => {});
+          expiryAlerted = true;
+        } else if (minsLeft > SESSION_EXPIRY_WARN_MIN) {
+          expiryAlerted = false; // token was refreshed/extended — re-arm the warning
+        }
       }
     } catch (err) {
       if (isBrowserDeadError(err)) {

@@ -12,6 +12,7 @@
     "test:watch": "vitest",
     "test:integration": "playwright test",
     "typecheck": "tsc --noEmit",
+    "check-config": "tsx src/index.ts --check-config",
     "smoke": "tsx scripts/smoke.ts",
     "capture-cookies": "tsx scripts/capture-cookies.ts",
     "service:install": "npm run build && node scripts/install-windows-service.js install",

@@ -52,6 +52,19 @@ async function main(): Promise<void> {
     rotateDays: settings.logging.rotateDays,
   });
 
+  // Validate-only mode: config + translators already loaded and zod-validated
+  // above. Exit here WITHOUT acquiring the lock, launching a browser, or touching
+  // the live board — so config can be safely checked (e.g. before a service
+  // restart) without any risk of starting a real scan/assignment.
+  if (process.argv.includes('--check-config')) {
+    logger.info('config valid', {
+      settingsPath: SETTINGS_PATH,
+      translatorsPath: TRANSLATORS_PATH,
+      dryRun: settings.assignment.dryRun,
+    });
+    return;
+  }
+
   const notifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, logger);
 
   if (!process.env.GOOGLE_CHAT_WEBHOOK_URL) {

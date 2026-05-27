@@ -99,7 +99,11 @@ export class AuthSession {
     // disconnecting, so close() can reject with a protocol error ("Failed to
     // find context"). Swallow it — there's nothing left to clean up and an
     // unhandled rejection here would make shutdown noisy / non-zero exit.
-    await this.context?.close().catch(() => {});
-    await this.browser?.close().catch(() => {});
+    await this.context
+      ?.close()
+      .catch((e) => this.logger.debug('context close failed during teardown', { error: (e as Error).message }));
+    await this.browser
+      ?.close()
+      .catch((e) => this.logger.debug('browser close failed during teardown', { error: (e as Error).message }));
   }
 }

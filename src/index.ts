@@ -396,16 +396,31 @@ async function main(): Promise<void> {
     logger
   );
 
+  let shuttingDown = false;
   const shutdown = async (): Promise<void> => {
-    scheduler.stop('shutdown');
-    await scheduler.waitForIdle(30_000);
-    await state.save();
-    await health.save();
-    await session.close();
-    await lock.release();
-    logger.info('shutdown complete');
-    await notifier.notify('Bot stopped', 'info');
-    process.exit(0);
+    if (shuttingDown) return; // a second SIGINT/SIGTERM must not re-run teardown
+    shuttingDown = true;
+    // Hard-exit backstop: guarantee the process exits even if an await below
+    // stalls (e.g. a wedged browser close or webhook). Generous enough to let
+    // the normal waitForIdle(30s) finish first.
+    const hardExit = setTimeout(() => process.exit(0), 40_000);
+    hardExit.unref();
+    try {
+      scheduler.stop('shutdown');
+      await scheduler.waitForIdle(30_000);
+      await state.save();
+      await health.save();
+      await session.close();
+      await lock.release();
+      logger.info('shutdown complete');
+      await notifier.notify('Bot stopped', 'info');
+    } catch (err) {
+      // Never let a teardown failure surface as an unhandled rejection — exit cleanly.
+      logger.error('error during shutdown (exiting anyway)', { error: (err as Error).message });
+    } finally {
+      clearTimeout(hardExit);
+      process.exit(0);
+    }
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

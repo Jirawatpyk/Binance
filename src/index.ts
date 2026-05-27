@@ -13,7 +13,7 @@ import { ProcessLock } from './core/lock.js';
 import { captureScreenshot, cleanOldScreenshots } from './core/screenshot.js';
 import type { Page } from 'playwright';
 import { GoogleChatNotifier, type AssignmentSummaryItem } from './notifications/google-chat.js';
-import type { SupportedLanguage } from './types/index.js';
+import type { SupportedLanguage, Settings, TranslatorsConfig } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
 import { runWithWatchdog } from './core/watchdog.js';
@@ -26,8 +26,25 @@ const TRANSLATORS_PATH = process.env.TRANSLATORS_PATH ?? './config/translators.y
 const LOCK_PATH = './data/.lock';
 
 async function main(): Promise<void> {
-  const settings = loadSettings(SETTINGS_PATH);
-  const translators = loadTranslators(TRANSLATORS_PATH);
+  let settings: Settings;
+  let translators: TranslatorsConfig;
+  try {
+    settings = loadSettings(SETTINGS_PATH);
+    translators = loadTranslators(TRANSLATORS_PATH);
+  } catch (err) {
+    // Config failed to load/validate. This throws before the normal logger/
+    // notifier exist, so a Windows-service restart loop would otherwise be
+    // silent — alert via a bootstrap notifier, then rethrow to exit.
+    const msg = (err as Error).message;
+    console.error('FATAL: config load failed —', msg);
+    if (process.env.GOOGLE_CHAT_WEBHOOK_URL) {
+      const bootLogger = createLogger({ level: 'error', logsDir: './logs', rotateDays: 1 });
+      await new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, bootLogger)
+        .notify(`Bot FAILED to start: config error — ${msg}. Fix config/settings.yml or config/translators.yml.`, 'error')
+        .catch(() => {});
+    }
+    throw err;
+  }
   const logger = createLogger({
     level: settings.logging.level,
     logsDir: settings.storage.logsDir,
@@ -142,8 +159,12 @@ async function main(): Promise<void> {
         // recover() already closed the old browser before throwing (e.g. cookies
         // expired → LoginFailedError), so `page` now points at a dead browser.
         // Don't run the scan on it — defer this tick; next tick's
-        // reauth.ensureReady() drives the clean PAUSED_AUTH flow.
+        // reauth.ensureReady() drives the clean PAUSED_AUTH flow. Count it as an
+        // error (so a recurring recycle failure can trip the alert) and persist
+        // health before bailing out of the tick.
+        health.recordTickError();
         logger.error('browser recycle failed; deferring tick to next cycle', { error: (err as Error).message });
+        await health.save().catch(() => {});
         return;
       }
     }
@@ -308,8 +329,6 @@ async function main(): Promise<void> {
           await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
-      // Persist all state mutations from this tick in one write (no-op if nothing changed).
-      await state.save();
       health.recordTickSuccess();
     } catch (err) {
       if (isBrowserDeadError(err)) {
@@ -338,6 +357,11 @@ async function main(): Promise<void> {
           );
         }
       }
+    } finally {
+      // Persist this tick's state mutations in one write — in finally so a
+      // browser-dead throw (recovered in the catch above) still saves processed/
+      // abandoned status and the round-robin counters. No-op if nothing changed.
+      await state.save().catch((e) => logger.warn('state.save failed (non-fatal)', { error: (e as Error).message }));
     }
 
     // Anti-spam: one summary card per cycle for all jobs assigned this tick —

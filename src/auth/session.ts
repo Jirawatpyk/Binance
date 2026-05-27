@@ -59,6 +59,21 @@ export class AuthSession {
     return this.page;
   }
 
+  isAlive(): boolean {
+    return !!this.page && !this.page.isClosed();
+  }
+
+  /** Tear down a dead browser and start a fresh one (reuses cookie storageState). */
+  async recover(): Promise<Page> {
+    this.logger.warn('recovering browser session');
+    try {
+      await this.close();
+    } catch {
+      /* ignore close errors on an already-dead browser */
+    }
+    return this.start();
+  }
+
   async close(): Promise<void> {
     await this.context?.close();
     await this.browser?.close();

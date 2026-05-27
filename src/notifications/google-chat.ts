@@ -20,6 +20,7 @@ export class GoogleChatNotifier {
         method: 'POST',
         headers: { 'Content-Type': 'application/json; charset=UTF-8' },
         body,
+        signal: AbortSignal.timeout(5_000),
       });
       if (!res.ok) {
         this.logger.warn('Google Chat notification non-2xx', { status: res.status, severity });

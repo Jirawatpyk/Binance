@@ -1,6 +1,7 @@
 import type { Page } from 'playwright';
 import { type Job, SUPPORTED_LANGUAGES } from '../types/index.js';
 import type winston from 'winston';
+import { parseCreatedUtc } from './date-utils.js';
 
 const JOB_BOARD_URL = 'https://www.translationtms.com/job-board';
 
@@ -271,6 +272,8 @@ export class JobScanner {
    * result pages and return all parsed Job rows (already client-side filtered by cutoff).
    */
   private async scanForLanguage(lang: string, cutoff: Date): Promise<Job[]> {
+    // Re-assert status filter defensively — Ant Select may reset on language change
+    await this.setStatusFilter('Available to Claim');
     await this.setLanguageFilter(lang);
     await this.clickSearch();
 
@@ -287,6 +290,7 @@ export class JobScanner {
     const allRows: Job[] = [];
     const seenIds = new Set<string>();
     const MAX_PAGES = 50; // safety cap: 50 pages × 10/page = 500 jobs max per language
+    let hitCap = false;
 
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
       const rows = await this.parseRows();
@@ -316,6 +320,12 @@ export class JobScanner {
       const disabled = await nextBtn.isDisabled().catch(() => true);
       if (disabled) break;
 
+      // If we're at the last allowed page but Next is still enabled, more pages exist
+      if (pageNum === MAX_PAGES) {
+        hitCap = true;
+        break;
+      }
+
       await nextBtn.click();
       await this.page.waitForLoadState('networkidle', { timeout: 5_000 }).catch(() => {
         // Client-side pagination — no network activity expected
@@ -325,8 +335,10 @@ export class JobScanner {
       await this.page.waitForTimeout(300);
     }
 
-    if (allRows.length >= MAX_PAGES * 10) {
-      this.logger.warn('MAX_PAGES safety cap hit — additional jobs may exist', { lang, maxPages: MAX_PAGES });
+    if (hitCap) {
+      this.logger.warn('MAX_PAGES cap reached while more pages exist — some jobs may be missed', {
+        maxPages: MAX_PAGES,
+      });
     }
 
     return allRows;
@@ -393,17 +405,15 @@ export class JobScanner {
   /**
    * Client-side date guard: return true if the board's Created string
    * represents a time >= cutoff.
-   * The board displays Created as "YYYY-MM-DD HH:mm" (UTC).
+   * The board displays Created as "YYYY-MM-DD HH:mm" or "YYYY-MM-DD HH:mm:ss" (UTC).
    * If parsing fails, we conservatively include the row (don't drop it).
    */
   private isCreatedAfterCutoff(createdStr: string, cutoff: Date): boolean {
-    if (!createdStr) return true; // unknown — include
-    // The board shows "YYYY-MM-DD HH:mm" — append ":00 UTC" so Date.parse works
-    const parsed = Date.parse(createdStr.trim().replace(' ', 'T') + ':00Z');
-    if (isNaN(parsed)) {
-      this.logger.debug('could not parse created date, including row conservatively', { createdStr });
+    const ms = parseCreatedUtc(createdStr);
+    if (ms === null) {
+      this.logger.warn('could not parse created date; including row conservatively', { createdStr });
       return true;
     }
-    return parsed >= cutoff.getTime();
+    return ms >= cutoff.getTime();
   }
 }

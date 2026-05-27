@@ -28,7 +28,8 @@ export class Assigner {
 
     // Wait for the loading spinner to disappear — the modal shows "Loading available users..."
     // with an ant-spin while fetching the list from the API. We must wait until list items appear.
-    await this.page.waitForSelector('li.ant-list-item', { timeout: 20_000 });
+    // Scoped to the modal so other Ant lists on the page can't satisfy this selector prematurely.
+    await modal.locator('li.ant-list-item').first().waitFor({ state: 'visible', timeout: 20_000 });
 
     // Modal renders the eligible translators as an Ant Design List
     // (ul.ant-list-items > li.ant-list-item), each item containing the

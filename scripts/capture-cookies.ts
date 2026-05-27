@@ -1,3 +1,5 @@
+// Intentionally uses bare `playwright` (not `playwright-extra`) — stealth is not needed
+// for this human-driven manual login flow; no bot-detection challenge is expected here.
 import { chromium } from 'playwright';
 import { promises as fs } from 'fs';
 import path from 'path';

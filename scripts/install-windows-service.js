@@ -7,6 +7,10 @@ const svc = new Service({
   script: path.resolve(__dirname, '..', 'dist', 'index.js'),
   nodeOptions: ['--enable-source-maps'],
   workingDirectory: path.resolve(__dirname, '..'),
+  // Auto-restart on crash / watchdog self-exit
+  wait: 2,          // seconds to wait before first restart
+  grow: 0.5,        // back-off growth factor between restarts
+  maxRestarts: 40,  // max restarts within a 60s window before giving up
 });
 
 svc.on('install', () => {

@@ -63,6 +63,24 @@ Get-Service BinanceTranslationBot
 
 Uninstall: `npm run service:uninstall`
 
+### 24/7 host setup (Local Windows)
+
+For unattended operation the host PC must stay awake and the service must
+survive crashes and reboots:
+
+- **Disable sleep** (Admin PowerShell):
+  ```powershell
+  powercfg /change standby-timeout-ac 0
+  powercfg /change hibernate-timeout-ac 0
+  ```
+- **Service auto-restart + boot start** are configured by `npm run service:install`
+  (node-windows: Automatic start, restart on failure).
+- **When the session expires** (2FA cookies stale) the bot does NOT crash — it
+  pauses and posts an alert to Google Chat. Re-run `npm run capture-cookies` on
+  the host; the bot auto-resumes on its next tick (no restart needed).
+- **Health:** a daily summary is posted to Google Chat at `reliability.monitoring.dailySummaryTime`;
+  problem alerts fire on consecutive failures, browser crashes, hangs, and session expiry.
+
 ### Docker
 
 ```powershell

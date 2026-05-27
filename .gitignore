@@ -8,3 +8,8 @@ logs/
 *.log
 playwright-report/
 test-results/
+
+# Local tooling artifacts (not shared)
+.specify/
+Image/
+.claude/agent-memory/

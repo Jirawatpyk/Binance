@@ -184,12 +184,12 @@ tick ทั้งหมดถูกหุ้มด้วย `runWithWatchdog(tic
 ```yaml
 reliability:
   watchdog:
-    tickTimeoutMs: 480000        # 8 นาที (interval 5 นาที + เผื่อ) — tick เกินนี้ = hang
+    tickTimeoutMs: 600000        # 10 นาที — สูงกว่า tick จริงสูงสุด (~7 นาทีที่ 50 งาน) เพื่อกัน false hang
   reauth:
     alertOnExpiry: true          # ส่ง alert เมื่อ session หมด
   monitoring:
     dailySummaryTime: "09:00"    # เวลา local ส่งสรุปรายวัน
-    consecutiveErrorAlert: 3     # fail ติดกันกี่ tick ถึง alert
+    consecutiveErrorAlert: 3     # fail ติดกัน 3 ticks (~15 นาที) ถึง alert
 ```
 
 zod schema + `Settings` type + example yml อัพเดตตาม (รวมถึง config-loader test fixture)
@@ -255,8 +255,8 @@ data/health.json                    (runtime, gitignored)
 
 ---
 
-## 9. Open Questions (ยืนยันใน review)
-1. `tickTimeoutMs` 8 นาที เหมาะไหม (interval 5 นาที)?
-2. `dailySummaryTime` 09:00 local — เวลาที่ต้องการ?
-3. `consecutiveErrorAlert` 3 ticks — ไวไป/ช้าไป?
-4. Daily summary ส่งแม้วันที่ไม่มีงาน assign ด้วยไหม (default: ส่ง — เป็น heartbeat ยืนยัน bot ยังมีชีวิต)?
+## 9. Decisions (locked)
+1. **`tickTimeoutMs` = 600000 (10 นาที)** — สูงกว่า tick จริงสูงสุด (~7 นาทีที่ 50 งาน) กัน false-positive แต่ยังจับ hang ถาวรได้
+2. **`dailySummaryTime` = "09:00"** local (เวลาไทย เริ่มงานเช้า)
+3. **`consecutiveErrorAlert` = 3** ticks (~15 นาทีพังต่อเนื่องก่อน alert)
+4. **Daily summary ส่งทุกวันแม้ไม่มีงาน** — ทำหน้าที่ heartbeat ยืนยัน bot ยังมีชีวิต

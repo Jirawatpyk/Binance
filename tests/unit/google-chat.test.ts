@@ -77,7 +77,7 @@ describe('buildAssignmentSummaryCard', () => {
     expect(dividers).toHaveLength(1); // divider only between jobs, not before the first
   });
 
-  it('renders the due date as a UTC bottomLabel, and omits it when unknown', () => {
+  it('renders the due date (UTC, colored) under the job, and omits it when unknown', () => {
     const c = card(
       buildAssignmentSummaryCard([
         { jobId: '1', name: 'With due', wordCount: 10, assigned: { 'lo-LA': 'a@eqho.com' }, dueDate: new Date('2026-05-30T14:05:00Z') },
@@ -85,8 +85,12 @@ describe('buildAssignmentSummaryCard', () => {
       ])
     );
     const jobWidgets = c.card.sections[0].widgets.filter((w) => w.decoratedText);
-    expect(jobWidgets[0].decoratedText?.bottomLabel).toBe('Due 2026-05-30 14:05 UTC');
-    expect(jobWidgets[1].decoratedText?.bottomLabel).toBeUndefined();
+    const t0 = jobWidgets[0].decoratedText?.text ?? '';
+    expect(t0).toContain('⏰ Due 2026-05-30 14:05 UTC');
+    expect(t0).toContain('#e8710a'); // colored
+    // due date comes before the job name (right under the "Job · words" line)
+    expect(t0.indexOf('Due ')).toBeLessThan(t0.indexOf('With due'));
+    expect(jobWidgets[1].decoratedText?.text).not.toContain('Due ');
   });
 
   it('singular header wording for a single job/assignment', () => {

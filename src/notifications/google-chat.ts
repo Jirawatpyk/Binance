@@ -73,12 +73,14 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
       )
       .join('<br>');
     const due = formatDueUtc(j.dueDate);
+    // Due date first (right under the job number) so the deadline stands out,
+    // then the job name and the language → translator lines.
+    const dueLine = due ? `<font color="#e8710a">⏰ ${due}</font><br>` : '';
     widgets.push({
       decoratedText: {
         startIcon: { knownIcon: 'DESCRIPTION' },
         topLabel: `Job ${esc(j.jobId)}  ·  ${j.wordCount.toLocaleString('en-US')} words`,
-        text: `<b>${esc(j.name)}</b><br>${langs}`,
-        ...(due ? { bottomLabel: due } : {}),
+        text: `${dueLine}<b>${esc(j.name)}</b><br>${langs}`,
         wrapText: true,
       },
     });

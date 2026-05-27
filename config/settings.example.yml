@@ -1,5 +1,5 @@
 polling:
-  intervalMinutes: 5
+  intervalMinutes: 3
   jitterSeconds: 30
 
 scan:

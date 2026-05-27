@@ -22,6 +22,7 @@ interface HealthState {
   consecutiveErrors: number;
   consecutiveZeroScans: number;
   today: TodayCounters;
+  previousDay: TodayCounters | null; // the last completed day, stashed at rollover
   lastDailySummaryDate: string | null;
 }
 
@@ -41,6 +42,7 @@ export class HealthMonitor {
       consecutiveErrors: 0,
       consecutiveZeroScans: 0,
       today: emptyToday(now),
+      previousDay: null,
       lastDailySummaryDate: null,
     };
   }
@@ -63,6 +65,10 @@ export class HealthMonitor {
 
   private rollover(now: Date): void {
     if (isNewDay(now, this.state.today.date)) {
+      // Stash the day that just ended so the daily summary (sent later, at
+      // dailySummaryTime) can report a FULL previous day rather than the few
+      // hours of the new day accumulated since midnight.
+      this.state.previousDay = this.state.today;
       this.state.today = emptyToday(now);
     }
   }
@@ -123,9 +129,12 @@ export class HealthMonitor {
     this.state.lastDailySummaryDate = localDateString(now);
   }
 
-  /** Structured figures for the daily heartbeat card. */
+  /** Structured figures for the daily heartbeat card. Reports the last COMPLETED
+   *  day (stashed at midnight rollover) when available, so the morning heartbeat
+   *  summarises a full day rather than only the hours since midnight; falls back
+   *  to the current day before any rollover has happened (first run). */
   dailySummaryStats(now: Date = new Date()): DailySummaryStats {
-    const t = this.state.today;
+    const t = this.state.previousDay ?? this.state.today;
     const uptimeHours = Number(
       ((now.getTime() - new Date(this.state.startedAt).getTime()) / 3_600_000).toFixed(1)
     );

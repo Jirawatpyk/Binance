@@ -96,6 +96,29 @@ describe('StateStore', () => {
     expect(store.isProcessed('p1')).toBe(false); // PARTIAL not FULL
   });
 
+  it('setRecheckAfter sets cooldown without changing status/assigned (PARTIAL preserved)', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markPartial('rc1', { 'lo-LA': 'a@eqho.com' }, ['km-KH']);
+    const until = new Date(Date.now() + 30 * 60_000).toISOString();
+    store.setRecheckAfter('rc1', until);
+    const e = store.getProcessedEntry('rc1');
+    expect(e?.status).toBe('PARTIAL'); // not demoted to FULL
+    expect(e?.recheckAfter).toBe(until);
+    expect(e?.assigned).toEqual({ 'lo-LA': 'a@eqho.com' });
+    expect(e?.failed).toEqual(['km-KH']);
+    expect(e?.retryCount).toBe(1); // retry tracking preserved
+  });
+
+  it('markAbandoned persists an ABANDONED entry even when no prior entry exists', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markAbandoned('gone'); // entry was pruned between ticks
+    const e = store.getProcessedEntry('gone');
+    expect(e?.status).toBe('ABANDONED');
+    expect(e?.assigned).toEqual({});
+  });
+
   it('markAbandoned flips status and isProcessed stays false', async () => {
     const { store } = newStore();
     await store.load();

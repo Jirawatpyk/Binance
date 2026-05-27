@@ -139,7 +139,12 @@ async function main(): Promise<void> {
         rebuildPipeline(page);
         lastBrowserStart = Date.now();
       } catch (err) {
-        logger.error('browser recycle failed; will retry next cycle', { error: (err as Error).message });
+        // recover() already closed the old browser before throwing (e.g. cookies
+        // expired → LoginFailedError), so `page` now points at a dead browser.
+        // Don't run the scan on it — defer this tick; next tick's
+        // reauth.ensureReady() drives the clean PAUSED_AUTH flow.
+        logger.error('browser recycle failed; deferring tick to next cycle', { error: (err as Error).message });
+        return;
       }
     }
 
@@ -172,12 +177,6 @@ async function main(): Promise<void> {
         // still lists as claimable) is on cooldown to avoid re-opening it every
         // tick for no work.
         if (entry?.status === 'ABANDONED') continue;
-        // Tradeoff: the cooldown is status-blind, so if a NEW language on this
-        // job becomes claimable mid-cooldown its pickup is delayed by up to
-        // scan.fullRecheckCooldownMinutes. That self-heals on the next expiry
-        // (which forces exactly one re-open), and a corrupt timestamp → NaN →
-        // does not skip (fail-open toward doing work).
-        if (entry?.recheckAfter && Date.now() < new Date(entry.recheckAfter).getTime()) continue;
         if (
           entry?.status === 'PARTIAL' &&
           (entry.retryCount ?? 0) >= settings.assignment.maxPartialRetries
@@ -192,9 +191,16 @@ async function main(): Promise<void> {
             'error'
           );
           state.markAbandoned(job.id);
-          await state.save();
-          continue;
+          continue; // persisted by the single save after the loop
         }
+        // Cooldown is checked AFTER the abandon gate above so an exhausted
+        // PARTIAL is still abandoned+alerted on schedule. A FULL job that
+        // re-opened to nothing assignable (e.g. rows stuck in WAITING_REVIEW,
+        // which the board still lists) waits out the cooldown before re-opening.
+        // Status-blind: a newly-claimable language is delayed up to
+        // scan.fullRecheckCooldownMinutes, self-healing at expiry. Corrupt
+        // timestamp → NaN → does not skip (fail-open toward doing work).
+        if (entry?.recheckAfter && Date.now() < new Date(entry.recheckAfter).getTime()) continue;
         if (settings.scan.detailPageDelayMs > 0) {
           await new Promise((r) => setTimeout(r, settings.scan.detailPageDelayMs));
         }
@@ -259,7 +265,6 @@ async function main(): Promise<void> {
           // Dry-run is preview-only: never persist processed-job state, otherwise
           // dry-run would mark jobs FULL and the eventual live run would skip them.
           if (!settings.assignment.dryRun) {
-            let persisted = true;
             if (failed.length === 0 && Object.keys(assigned).length > 0) {
               state.markProcessed(job.id, assigned);
             } else if (Object.keys(assigned).length > 0) {
@@ -273,22 +278,28 @@ async function main(): Promise<void> {
               // next tick re-checks it live.
               logger.warn('no lo-LA/km-KH rows parsed on detail page — not marking processed, will retry next tick', { jobId: job.id });
               await captureScreenshot(page, settings.storage.logsDir, `empty-detail-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
-              persisted = false;
+              // No state mutation → nothing to persist; re-checked next tick.
             } else if (failed.length === 0) {
               // Target-language rows existed but none were assignable (already
-              // have a translator, or are in WAITING_REVIEW / in progress). Mark
-              // FULL and set a recheck cooldown so the board re-listing this job
-              // (which happens for review-stage rows) doesn't re-open it every tick.
+              // have a translator, or are in WAITING_REVIEW / in progress). Cool
+              // down the re-check so the board re-listing this job (which happens
+              // for review-stage rows) doesn't re-open it every tick.
               const recheckAfter = new Date(
                 Date.now() + settings.scan.fullRecheckCooldownMinutes * 60_000
               ).toISOString();
               logger.info('job has no assignable rows — cooling down recheck', { jobId: job.id, recheckAfter });
-              state.markProcessed(job.id, {}, recheckAfter);
+              if (entry?.status === 'PARTIAL') {
+                // Do NOT demote a PARTIAL to FULL — that discards failed[]/
+                // retryCount and bypasses the maxPartialRetries→ABANDONED net.
+                // Keep it PARTIAL; just cool down the re-check.
+                state.setRecheckAfter(job.id, recheckAfter);
+              } else {
+                state.markProcessed(job.id, {}, recheckAfter);
+              }
             } else {
               logger.error('all language assignments failed for job', { jobId: job.id, failed });
               state.markPartial(job.id, {}, failed);
             }
-            if (persisted) await state.save();
           }
         } catch (err) {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
@@ -297,6 +308,8 @@ async function main(): Promise<void> {
           await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
+      // Persist all state mutations from this tick in one write (no-op if nothing changed).
+      await state.save();
       health.recordTickSuccess();
     } catch (err) {
       if (isBrowserDeadError(err)) {

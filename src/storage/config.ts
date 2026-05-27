@@ -14,7 +14,9 @@ const settingsSchema = z.object({
     maxCandidatesPerTick: z.number().int().positive(),
     detailPageDelayMs: z.number().int().nonnegative(),
     processedJobRetainHours: z.number().positive(),
-    fullRecheckCooldownMinutes: z.number().int().nonnegative(),
+    // Defaulted so a settings.yml written before this field was added still
+    // loads (a missing required field would crash startup in a restart loop).
+    fullRecheckCooldownMinutes: z.number().int().nonnegative().default(30),
   }),
   browser: z.object({
     headless: z.boolean(),

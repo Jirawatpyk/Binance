@@ -420,7 +420,10 @@ export class JobScanner {
     return {
       id: r.id,
       name: r.name,
-      dueDate: dueMs !== null ? new Date(dueMs) : new Date(r.dueDate),
+      // parseCreatedUtc now handles date-only and trailing-zone forms in UTC; if
+      // it still can't parse, store an Invalid Date (card omits the due line)
+      // rather than new Date(str) which would mis-read the time in local tz.
+      dueDate: dueMs !== null ? new Date(dueMs) : new Date(NaN),
       project: r.project,
       languageCount: r.languageCount,
       languagesNeeded: r.languagesNeeded,

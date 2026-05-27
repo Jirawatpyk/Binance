@@ -89,8 +89,23 @@ export class StateStore {
 
   markAbandoned(jobId: string): void {
     const prev = this.state.processedJobs[jobId];
+    // Always persist the give-up decision, even if the prior entry was pruned
+    // between ticks — otherwise the job would be re-scanned and retried forever
+    // with no ABANDONED record.
+    const processedAt = new Date().toISOString();
+    this.state.processedJobs[jobId] = prev
+      ? { ...prev, status: 'ABANDONED', processedAt }
+      : { assigned: {}, status: 'ABANDONED', processedAt };
+    this.dirty = true;
+  }
+
+  /** Set/refresh the recheck cooldown on an existing entry without changing its
+   *  status or assignment record (used to cool down a PARTIAL job that re-opened
+   *  to nothing assignable, preserving its retryCount/failed). */
+  setRecheckAfter(jobId: string, recheckAfter: string): void {
+    const prev = this.state.processedJobs[jobId];
     if (!prev) return;
-    this.state.processedJobs[jobId] = { ...prev, status: 'ABANDONED', processedAt: new Date().toISOString() };
+    this.state.processedJobs[jobId] = { ...prev, recheckAfter };
     this.dirty = true;
   }
 

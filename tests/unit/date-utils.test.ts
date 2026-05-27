@@ -21,6 +21,13 @@ describe('parseCreatedUtc', () => {
   it('respects an explicit +07:00 offset', () => {
     expect(parseCreatedUtc('2026-05-27 10:52+07:00')).toBe(Date.UTC(2026, 4, 27, 3, 52, 0));
   });
+  it('parses a date-only value as midnight UTC', () => {
+    expect(parseCreatedUtc('2026-05-30')).toBe(Date.UTC(2026, 4, 30, 0, 0, 0));
+  });
+  it('tolerates a trailing UTC/GMT zone word', () => {
+    expect(parseCreatedUtc('2026-05-27 10:52 UTC')).toBe(Date.UTC(2026, 4, 27, 10, 52, 0));
+    expect(parseCreatedUtc('2026-05-27 10:52 GMT')).toBe(Date.UTC(2026, 4, 27, 10, 52, 0));
+  });
 });
 
 describe('formatBoardDate', () => {

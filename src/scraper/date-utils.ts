@@ -8,9 +8,13 @@
  * Accepts "YYYY-MM-DD HH:mm" and "YYYY-MM-DD HH:mm:ss"; treats the time as UTC.
  */
 export function parseCreatedUtc(createdStr: string): number | null {
-  const s = createdStr.trim();
+  // Drop a trailing zone word ('... UTC' / '... GMT') the board may append, so
+  // the date/time normalization below isn't defeated by it.
+  const s = createdStr.trim().replace(/\s+(UTC|GMT)$/i, '');
   if (!s) return null;
   let normalized = s.replace(' ', 'T');
+  // date-only "YYYY-MM-DD" -> midnight UTC
+  if (/^\d{4}-\d{2}-\d{2}$/.test(normalized)) normalized += 'T00:00:00';
   // append seconds if missing (HH:mm -> HH:mm:00)
   if (/T\d{2}:\d{2}$/.test(normalized)) normalized += ':00';
   // append Z (UTC) only if no timezone already present

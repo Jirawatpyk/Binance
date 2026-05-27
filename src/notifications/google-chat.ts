@@ -39,14 +39,16 @@ export function dueColor(d?: Date | null, now: Date = new Date()): string {
   return '#888888'; // plenty of time
 }
 
+/** "YYYY-MM-DD HH:mm UTC" for a valid Date. Single source of truth for the two
+ *  card timestamp formatters below. */
+function fmtUtc(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+}
+
 /** Format a due date as "Due YYYY-MM-DD HH:mm UTC", or null when unknown/invalid. */
 function formatDueUtc(d?: Date | null): string | null {
-  if (!d || Number.isNaN(d.getTime())) return null;
-  const p = (n: number) => String(n).padStart(2, '0');
-  return (
-    `Due ${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
-    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`
-  );
+  return !d || Number.isNaN(d.getTime()) ? null : `Due ${fmtUtc(d)}`;
 }
 
 /** A simple one-paragraph card for lifecycle/alert messages. */
@@ -119,9 +121,7 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
 function utcStamp(iso: string | null): string {
   if (!iso) return '—';
   const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+  return Number.isNaN(d.getTime()) ? '—' : fmtUtc(d);
 }
 
 /**

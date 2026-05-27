@@ -109,6 +109,23 @@ describe('HealthMonitor', () => {
     expect(s.lastAssignmentAt).toBe(new Date(2026, 4, 7, 8, 31).toISOString());
   });
 
+  it('dailySummaryStats reports the COMPLETED previous day after a rollover', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    // Monday's work
+    monitor.recordAssignment(true, 'lo-LA', new Date(2026, 4, 7, 10, 0));
+    monitor.recordAssignment(true, 'km-KH', new Date(2026, 4, 7, 11, 0));
+    monitor.recordJobAssigned();
+    // Tuesday's first tick rolls over (stashes Monday as previousDay)
+    monitor.recordTickStart(new Date(2026, 4, 8, 0, 5));
+    monitor.recordAssignment(true, 'lo-LA', new Date(2026, 4, 8, 1, 0)); // a bit of Tuesday
+    // The 09:00 Tuesday summary should report MONDAY's full totals, not Tuesday-so-far
+    const s = monitor.dailySummaryStats(new Date(2026, 4, 8, 9, 0));
+    expect(s.date).toBe('2026-05-07');
+    expect(s.assigned).toBe(2);
+    expect(s.byLang).toEqual({ 'lo-LA': 1, 'km-KH': 1 });
+    expect(s.jobsAssigned).toBe(1);
+  });
+
   it('defaults jobsAssigned to 0 when loading a pre-jobsAssigned health.json', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
     const file = path.join(dir, 'health.json');

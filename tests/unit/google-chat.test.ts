@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTextCard, buildAssignmentSummaryCard, buildDailySummaryCard } from '../../src/notifications/google-chat.js';
+import { buildTextCard, buildAssignmentSummaryCard, buildDailySummaryCard, dueColor } from '../../src/notifications/google-chat.js';
 
 // Narrow helper to reach into the cardsV2 payload without `any` everywhere.
 function card(payload: unknown): {
@@ -92,9 +92,10 @@ describe('buildAssignmentSummaryCard', () => {
     const jobWidgets = c.card.sections[0].widgets.filter((w) => w.decoratedText);
     const t0 = jobWidgets[0].decoratedText?.text ?? '';
     expect(t0).toContain('⏰ Due 2026-05-30 14:05 UTC');
-    expect(t0).toContain('#e8710a'); // colored
-    // due date comes before the job name (right under the "Job · words" line)
-    expect(t0.indexOf('Due ')).toBeLessThan(t0.indexOf('With due'));
+    expect(t0).toMatch(/<font color="#[0-9a-f]{6}">⏰ Due/); // coloured by urgency (see dueColor tests)
+    // order: job name → due → language lines
+    expect(t0.indexOf('With due')).toBeLessThan(t0.indexOf('Due '));
+    expect(t0.indexOf('Due ')).toBeLessThan(t0.indexOf('lo-LA'));
     expect(jobWidgets[1].decoratedText?.text).not.toContain('Due ');
   });
 
@@ -138,6 +139,22 @@ describe('buildAssignmentSummaryCard', () => {
     // intentional markup must survive (not escaped)
     expect(text).toContain('<b>');
     expect(text).toContain('<br>');
+  });
+});
+
+describe('dueColor', () => {
+  const now = new Date('2026-05-27T12:00:00Z');
+  it('red when overdue or due within 24h', () => {
+    expect(dueColor(new Date('2026-05-27T08:00:00Z'), now)).toBe('#d93025'); // overdue
+    expect(dueColor(new Date('2026-05-28T10:00:00Z'), now)).toBe('#d93025'); // 22h
+  });
+  it('amber when due within 3 days', () => {
+    expect(dueColor(new Date('2026-05-29T12:00:00Z'), now)).toBe('#e8710a'); // 48h
+  });
+  it('grey when far off or unknown', () => {
+    expect(dueColor(new Date('2026-06-05T12:00:00Z'), now)).toBe('#888888'); // >3 days
+    expect(dueColor(null, now)).toBe('#888888');
+    expect(dueColor(new Date('invalid'), now)).toBe('#888888');
   });
 });
 

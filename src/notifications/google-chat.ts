@@ -27,6 +27,18 @@ function translatorHandle(email: string): string {
   return at > 0 ? email.slice(0, at) : email;
 }
 
+/**
+ * Pick a font colour for a due date by urgency: red when overdue or due within
+ * 24h, amber within 3 days, grey when there's plenty of time (or unknown).
+ */
+export function dueColor(d?: Date | null, now: Date = new Date()): string {
+  if (!d || Number.isNaN(d.getTime())) return '#888888';
+  const hoursLeft = (d.getTime() - now.getTime()) / 3_600_000;
+  if (hoursLeft <= 24) return '#d93025'; // overdue or < 1 day — urgent
+  if (hoursLeft <= 72) return '#e8710a'; // < 3 days — soon
+  return '#888888'; // plenty of time
+}
+
 /** Format a due date as "Due YYYY-MM-DD HH:mm UTC", or null when unknown/invalid. */
 function formatDueUtc(d?: Date | null): string | null {
   if (!d || Number.isNaN(d.getTime())) return null;
@@ -73,14 +85,14 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
       )
       .join('<br>');
     const due = formatDueUtc(j.dueDate);
-    // Due date first (right under the job number) so the deadline stands out,
-    // then the job name and the language → translator lines.
-    const dueLine = due ? `<font color="#e8710a">⏰ ${due}</font><br>` : '';
+    // Order: job name, then the deadline (coloured by urgency), then the
+    // language → translator lines — "what it is, when it's due, who's on it".
+    const dueLine = due ? `<font color="${dueColor(j.dueDate)}">⏰ ${due}</font><br>` : '';
     widgets.push({
       decoratedText: {
         startIcon: { knownIcon: 'DESCRIPTION' },
         topLabel: `Job ${esc(j.jobId)}  ·  ${j.wordCount.toLocaleString('en-US')} words`,
-        text: `${dueLine}<b>${esc(j.name)}</b><br>${langs}`,
+        text: `<b>${esc(j.name)}</b><br>${dueLine}${langs}`,
         wrapText: true,
       },
     });

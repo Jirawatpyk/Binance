@@ -93,12 +93,22 @@ export class Assigner {
     // language is still WAITING_TRANSLATION, the assign did NOT take — fail so
     // the caller retries instead of silently recording a false success.
     await this.selectWaitingTab(false);
-    const stillWaiting = await this.page
-      .locator('table tbody tr')
-      .filter({ hasText: language })
-      .filter({ hasText: 'WAITING_TRANSLATION' })
-      .count()
-      .catch(() => 0);
+    const stillWaitingRow = () =>
+      this.page
+        .locator('table tbody tr')
+        .filter({ hasText: language })
+        .filter({ hasText: 'WAITING_TRANSLATION' })
+        .count()
+        .catch(() => 0);
+    // Poll briefly: the Waiting list can take a moment to drop the assigned row.
+    // Succeed as soon as it clears rather than failing on one slow read (which
+    // would cause a needless retry + false failure metric).
+    let stillWaiting = await stillWaitingRow();
+    const deadline = Date.now() + 3_000;
+    while (stillWaiting > 0 && Date.now() < deadline) {
+      await this.page.waitForTimeout(300);
+      stillWaiting = await stillWaitingRow();
+    }
     if (stillWaiting > 0) {
       throw new AssignmentFailedError('row still WAITING_TRANSLATION after assign — not confirmed', {
         language,

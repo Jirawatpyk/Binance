@@ -388,10 +388,15 @@ export class JobScanner {
 
   /** Convert a RawRow to a Job (parse dueDate to Date). */
   private toJob(r: RawRow): Job {
+    // The board shows due date in UTC ("YYYY-MM-DD HH:mm"). parseCreatedUtc
+    // handles that correctly; a bare `new Date(str)` would misread the time as
+    // local. Fall back to new Date for date-only strings (already UTC midnight)
+    // and leave it Invalid for blanks (the card then omits the due line).
+    const dueMs = parseCreatedUtc(r.dueDate);
     return {
       id: r.id,
       name: r.name,
-      dueDate: new Date(r.dueDate),
+      dueDate: dueMs !== null ? new Date(dueMs) : new Date(r.dueDate),
       project: r.project,
       languageCount: r.languageCount,
       languagesNeeded: r.languagesNeeded,

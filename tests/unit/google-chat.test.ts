@@ -9,7 +9,7 @@ function card(payload: unknown): {
     sections: Array<{
       widgets: Array<{
         textParagraph?: { text: string };
-        decoratedText?: { topLabel?: string; text: string };
+        decoratedText?: { topLabel?: string; bottomLabel?: string; text: string };
         divider?: object;
       }>;
     }>;
@@ -75,6 +75,18 @@ describe('buildAssignmentSummaryCard', () => {
     const dividers = widgets.filter((w) => w.divider);
     expect(jobWidgets).toHaveLength(2);
     expect(dividers).toHaveLength(1); // divider only between jobs, not before the first
+  });
+
+  it('renders the due date as a UTC bottomLabel, and omits it when unknown', () => {
+    const c = card(
+      buildAssignmentSummaryCard([
+        { jobId: '1', name: 'With due', wordCount: 10, assigned: { 'lo-LA': 'a@eqho.com' }, dueDate: new Date('2026-05-30T14:05:00Z') },
+        { jobId: '2', name: 'No due', wordCount: 10, assigned: { 'km-KH': 'b@eqho.com' } },
+      ])
+    );
+    const jobWidgets = c.card.sections[0].widgets.filter((w) => w.decoratedText);
+    expect(jobWidgets[0].decoratedText?.bottomLabel).toBe('Due 2026-05-30 14:05 UTC');
+    expect(jobWidgets[1].decoratedText?.bottomLabel).toBeUndefined();
   });
 
   it('singular header wording for a single job/assignment', () => {

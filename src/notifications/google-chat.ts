@@ -9,6 +9,7 @@ export interface AssignmentSummaryItem {
   name: string;
   wordCount: number;
   assigned: Record<string, string>; // language code -> translator email
+  dueDate?: Date | null; // job due date (rendered in UTC); omitted when unknown
 }
 
 function emojiFor(severity: Severity): string {
@@ -24,6 +25,16 @@ function esc(s: string): string {
 function translatorHandle(email: string): string {
   const at = email.indexOf('@');
   return at > 0 ? email.slice(0, at) : email;
+}
+
+/** Format a due date as "Due YYYY-MM-DD HH:mm UTC", or null when unknown/invalid. */
+function formatDueUtc(d?: Date | null): string | null {
+  if (!d || Number.isNaN(d.getTime())) return null;
+  const p = (n: number) => String(n).padStart(2, '0');
+  return (
+    `Due ${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+    `${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`
+  );
 }
 
 /** A simple one-paragraph card for lifecycle/alert messages. */
@@ -61,11 +72,13 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
           `• <b>${esc(lang)}</b> → ${esc(translatorHandle(tr))} <font color="#888888">(${esc(tr)})</font>`
       )
       .join('<br>');
+    const due = formatDueUtc(j.dueDate);
     widgets.push({
       decoratedText: {
         startIcon: { knownIcon: 'DESCRIPTION' },
         topLabel: `Job ${esc(j.jobId)}  ·  ${j.wordCount.toLocaleString('en-US')} words`,
         text: `<b>${esc(j.name)}</b><br>${langs}`,
+        ...(due ? { bottomLabel: due } : {}),
         wrapText: true,
       },
     });

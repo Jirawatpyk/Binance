@@ -22,8 +22,8 @@ async function send(label: string, payload: unknown): Promise<void> {
 await send(
   'assignment-card',
   buildAssignmentSummaryCard([
-    { jobId: '62464', name: 'Binance Finance App — Q2 Localization', wordCount: 340, assigned: { 'lo-LA': 'LO_T1@eqho.com' } },
-    { jobId: '62466', name: 'Compliance Notice Update', wordCount: 128, assigned: { 'km-KH': 'kh_e3@eqho.com' } },
+    { jobId: '62464', name: 'Binance Finance App — Q2 Localization', wordCount: 340, assigned: { 'lo-LA': 'LO_T1@eqho.com' }, dueDate: new Date('2026-05-30T14:00:00Z') },
+    { jobId: '62466', name: 'Compliance Notice Update', wordCount: 128, assigned: { 'km-KH': 'kh_e3@eqho.com' }, dueDate: new Date('2026-05-28T09:30:00Z') },
     { jobId: '62470', name: 'Wallet Onboarding Flow', wordCount: 1520, assigned: { 'lo-LA': 'LO_T3@eqho.com', 'km-KH': 'kh_e3@eqho.com' } },
   ])
 );

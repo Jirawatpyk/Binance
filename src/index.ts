@@ -233,6 +233,7 @@ async function main(): Promise<void> {
               name: job.name,
               wordCount: detail.wordCount,
               assigned: assigned as Record<string, string>,
+              dueDate: job.dueDate,
             });
           }
           // Dry-run is preview-only: never persist processed-job state, otherwise

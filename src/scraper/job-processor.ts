@@ -16,7 +16,21 @@ export class JobProcessor {
     // Ant spinner must settle before reading the table — otherwise we may read
     // stale rows from the previously selected tab while the new tab loads.
     await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 10_000 }).catch(() => {});
-    await this.page.waitForSelector('table tbody tr', { timeout: 10_000 });
+    // Wait for the Waiting-tab LANGUAGE rows specifically. A bare
+    // `table tbody tr` can resolve against an unrelated/earlier table before the
+    // language table populates (a race seen on brand-new jobs), yielding an
+    // empty parse. Poll until a lo-LA/km-KH row is actually present; if the job
+    // genuinely has none, this times out and parseLanguageRows() returns [] —
+    // which the caller treats as "retry later", not "done".
+    await this.page
+      .waitForFunction(
+        () =>
+          Array.from(document.querySelectorAll('table tbody tr td:first-child')).some((c) =>
+            /lo-LA|km-KH|Lao|Khmer/i.test(c.textContent ?? '')
+          ),
+        { timeout: 8_000 }
+      )
+      .catch(() => {});
     const languages = await this.parseLanguageRows();
     this.logger.info('job detail parsed', { jobId, wordCount, languages: languages.map((l) => l.code) });
     return { jobId, wordCount, targetLanguages: languages };

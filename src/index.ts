@@ -238,18 +238,31 @@ async function main(): Promise<void> {
           // Dry-run is preview-only: never persist processed-job state, otherwise
           // dry-run would mark jobs FULL and the eventual live run would skip them.
           if (!settings.assignment.dryRun) {
+            let persisted = true;
             if (failed.length === 0 && Object.keys(assigned).length > 0) {
               state.markProcessed(job.id, assigned);
             } else if (Object.keys(assigned).length > 0) {
               state.markPartial(job.id, assigned, failed);
+            } else if (detail.targetLanguages.length === 0) {
+              // The board filter matched this job for lo-LA/km-KH, yet the
+              // Waiting tab parsed zero such rows. That is almost always a
+              // transient render/load race (a brand-new job whose rows haven't
+              // populated) or work claimed in the seconds since the scan — NOT a
+              // reason to mark the job done forever. Leave it unpersisted so the
+              // next tick re-checks it live.
+              logger.warn('no lo-LA/km-KH rows parsed on detail page — not marking processed, will retry next tick', { jobId: job.id });
+              await captureScreenshot(page, settings.storage.logsDir, `empty-detail-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
+              persisted = false;
             } else if (failed.length === 0) {
+              // Target-language rows existed but none were assignable (each
+              // already had a translator) → genuinely assigned elsewhere.
               logger.info('job already fully assigned externally', { jobId: job.id });
               state.markProcessed(job.id, {});
             } else {
               logger.error('all language assignments failed for job', { jobId: job.id, failed });
               state.markPartial(job.id, {}, failed);
             }
-            await state.save();
+            if (persisted) await state.save();
           }
         } catch (err) {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery

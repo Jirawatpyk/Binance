@@ -76,4 +76,10 @@ describe('AssignmentEngine.pick', () => {
     expect(r.translator).toBe('LO_T3@eqho.com'); // 501 > 500 → tier 2 (maxWords: 2000)
     expect(r.ruleIndex).toBe(1);
   });
+
+  it('throws on a non-positive or non-finite word count instead of guessing a tier', () => {
+    expect(() => makeEngine().pick('lo-LA', 0)).toThrow(BotError);
+    expect(() => makeEngine().pick('lo-LA', -5)).toThrow(BotError);
+    expect(() => makeEngine().pick('lo-LA', NaN)).toThrow(BotError);
+  });
 });

@@ -359,10 +359,14 @@ async function main(): Promise<void> {
       //     survives a restart (the stale-snapshot-on-restart problem).
       //  2) Warn before the token expires so it can be refreshed proactively.
       try {
-        await session.saveSession();
         const expMs = await session.getAuthExpiryMs();
+        // Persist only when the token is live, so we never overwrite the
+        // last-known-good cookies.json with a dead/unparseable snapshot.
+        if (expMs !== null && expMs > Date.now()) {
+          await session.saveSession();
+        }
         if (expMs !== null) {
-          const minsLeft = Math.round((expMs - Date.now()) / 60_000);
+          const minsLeft = Math.max(0, Math.round((expMs - Date.now()) / 60_000));
           if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted) {
             await notifier.notify(
               `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,

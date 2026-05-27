@@ -235,18 +235,22 @@ async function main(): Promise<void> {
               assigned: assigned as Record<string, string>,
             });
           }
-          if (failed.length === 0 && Object.keys(assigned).length > 0) {
-            state.markProcessed(job.id, assigned);
-          } else if (Object.keys(assigned).length > 0) {
-            state.markPartial(job.id, assigned, failed);
-          } else if (failed.length === 0) {
-            logger.info('job already fully assigned externally', { jobId: job.id });
-            state.markProcessed(job.id, {});
-          } else {
-            logger.error('all language assignments failed for job', { jobId: job.id, failed });
-            state.markPartial(job.id, {}, failed);
+          // Dry-run is preview-only: never persist processed-job state, otherwise
+          // dry-run would mark jobs FULL and the eventual live run would skip them.
+          if (!settings.assignment.dryRun) {
+            if (failed.length === 0 && Object.keys(assigned).length > 0) {
+              state.markProcessed(job.id, assigned);
+            } else if (Object.keys(assigned).length > 0) {
+              state.markPartial(job.id, assigned, failed);
+            } else if (failed.length === 0) {
+              logger.info('job already fully assigned externally', { jobId: job.id });
+              state.markProcessed(job.id, {});
+            } else {
+              logger.error('all language assignments failed for job', { jobId: job.id, failed });
+              state.markPartial(job.id, {}, failed);
+            }
+            await state.save();
           }
-          await state.save();
         } catch (err) {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
           logger.error('job processing error', { jobId: job.id, error: (err as Error).message });

@@ -20,6 +20,7 @@ import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError } from './core/recovery-utils.js';
 import { TranslatorNotFoundError } from './core/errors.js';
 import { isLanguageAssignable } from './assignment/eligibility.js';
+import { classifyOutcome } from './assignment/outcome.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
 const TRANSLATORS_PATH = process.env.TRANSLATORS_PATH ?? './config/translators.yml';
@@ -286,40 +287,45 @@ async function main(): Promise<void> {
           // Dry-run is preview-only: never persist processed-job state, otherwise
           // dry-run would mark jobs FULL and the eventual live run would skip them.
           if (!settings.assignment.dryRun) {
-            if (failed.length === 0 && Object.keys(assigned).length > 0) {
-              state.markProcessed(job.id, assigned);
-            } else if (Object.keys(assigned).length > 0) {
-              state.markPartial(job.id, assigned, failed);
-            } else if (detail.targetLanguages.length === 0) {
-              // The board filter matched this job for lo-LA/km-KH, yet the
-              // Waiting tab parsed zero such rows. That is almost always a
-              // transient render/load race (a brand-new job whose rows haven't
-              // populated) or work claimed in the seconds since the scan — NOT a
-              // reason to mark the job done forever. Leave it unpersisted so the
-              // next tick re-checks it live.
-              logger.warn('no lo-LA/km-KH rows parsed on detail page — not marking processed, will retry next tick', { jobId: job.id });
-              await captureScreenshot(page, settings.storage.logsDir, `empty-detail-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
-              // No state mutation → nothing to persist; re-checked next tick.
-            } else if (failed.length === 0) {
-              // Target-language rows existed but none were assignable (already
-              // have a translator, or are in WAITING_REVIEW / in progress). Cool
-              // down the re-check so the board re-listing this job (which happens
-              // for review-stage rows) doesn't re-open it every tick.
-              const recheckAfter = new Date(
-                Date.now() + settings.scan.fullRecheckCooldownMinutes * 60_000
-              ).toISOString();
-              logger.info('job has no assignable rows — cooling down recheck', { jobId: job.id, recheckAfter });
-              if (entry?.status === 'PARTIAL') {
-                // Do NOT demote a PARTIAL to FULL — that discards failed[]/
-                // retryCount and bypasses the maxPartialRetries→ABANDONED net.
-                // Keep it PARTIAL; just cool down the re-check.
-                state.setRecheckAfter(job.id, recheckAfter);
-              } else {
-                state.markProcessed(job.id, {}, recheckAfter);
+            // Pure decision (unit-tested in outcome.test.ts); side effects below.
+            const outcome = classifyOutcome({
+              assignedCount: Object.keys(assigned).length,
+              failedCount: failed.length,
+              targetLanguageCount: detail.targetLanguages.length,
+              prevStatus: entry?.status,
+            });
+            switch (outcome) {
+              case 'PROCESSED':
+                state.markProcessed(job.id, assigned);
+                break;
+              case 'PARTIAL':
+                state.markPartial(job.id, assigned, failed);
+                break;
+              case 'ALL_FAILED':
+                logger.error('all language assignments failed for job', { jobId: job.id, failed });
+                state.markPartial(job.id, {}, failed);
+                break;
+              case 'EMPTY_PARSE':
+                // Board matched lo-LA/km-KH but the Waiting tab parsed zero such
+                // rows — a transient render/load race or work claimed since the
+                // scan. Don't mark it done; leave unpersisted to re-check next tick.
+                logger.warn('no lo-LA/km-KH rows parsed on detail page — not marking processed, will retry next tick', { jobId: job.id });
+                await captureScreenshot(page, settings.storage.logsDir, `empty-detail-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
+                break;
+              case 'COOLDOWN_PARTIAL':
+              case 'COOLDOWN_FULL': {
+                // Rows existed but none were assignable (already assigned, or in
+                // WAITING_REVIEW). Cool down the re-check so the board re-listing
+                // this job doesn't re-open it every tick. PARTIAL keeps its
+                // status (preserving failed[]/retryCount → ABANDONED net).
+                const recheckAfter = new Date(
+                  Date.now() + settings.scan.fullRecheckCooldownMinutes * 60_000
+                ).toISOString();
+                logger.info('job has no assignable rows — cooling down recheck', { jobId: job.id, recheckAfter });
+                if (outcome === 'COOLDOWN_PARTIAL') state.setRecheckAfter(job.id, recheckAfter);
+                else state.markProcessed(job.id, {}, recheckAfter);
+                break;
               }
-            } else {
-              logger.error('all language assignments failed for job', { jobId: job.id, failed });
-              state.markPartial(job.id, {}, failed);
             }
           }
         } catch (err) {

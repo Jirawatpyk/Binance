@@ -80,6 +80,7 @@ async function main(): Promise<void> {
       for (const job of candidates) {
         if (state.isProcessed(job.id)) continue;
         try {
+          logger.info('processing job', { jobId: job.id, name: job.name });
           const detail = await processor.open(job.detailUrl, job.id);
           const assigned: Partial<Record<SupportedLanguage, string>> = {};
           const failed: SupportedLanguage[] = [];

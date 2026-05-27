@@ -95,7 +95,11 @@ export class AuthSession {
   }
 
   async close(): Promise<void> {
-    await this.context?.close();
-    await this.browser?.close();
+    // Teardown is best-effort: on Ctrl+C / shutdown the browser may already be
+    // disconnecting, so close() can reject with a protocol error ("Failed to
+    // find context"). Swallow it — there's nothing left to clean up and an
+    // unhandled rejection here would make shutdown noisy / non-zero exit.
+    await this.context?.close().catch(() => {});
+    await this.browser?.close().catch(() => {});
   }
 }

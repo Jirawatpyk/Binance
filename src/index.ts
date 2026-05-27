@@ -12,7 +12,7 @@ import { retry } from './core/retry.js';
 import { ProcessLock } from './core/lock.js';
 import { captureScreenshot, cleanOldScreenshots } from './core/screenshot.js';
 import type { Page } from 'playwright';
-import { GoogleChatNotifier } from './notifications/google-chat.js';
+import { GoogleChatNotifier, type AssignmentSummaryItem } from './notifications/google-chat.js';
 import type { SupportedLanguage } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
@@ -140,6 +140,7 @@ async function main(): Promise<void> {
     }
 
     try {
+      const assignedThisTick: AssignmentSummaryItem[] = [];
       const candidates = await scanner.scan();
       if (candidates.length === 0) {
         health.recordZeroScan();
@@ -215,10 +216,7 @@ async function main(): Promise<void> {
                 if (pick.useRoundRobin && pick.rrKey) {
                   state.incrementRR(pick.rrKey);
                 }
-                await notifier.notify(
-                  `Assigned job ${job.id} "${job.name}" — ${lang.code} → ${pick.translator} (${detail.wordCount} words)`,
-                  'info'
-                );
+                // Reported once per tick as a single summary card (see after the loop).
               }
             } catch (err) {
               if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery
@@ -230,6 +228,12 @@ async function main(): Promise<void> {
           }
           if (!settings.assignment.dryRun && Object.keys(assigned).length > 0) {
             health.recordJobAssigned();
+            assignedThisTick.push({
+              jobId: job.id,
+              name: job.name,
+              wordCount: detail.wordCount,
+              assigned: assigned as Record<string, string>,
+            });
           }
           if (failed.length === 0 && Object.keys(assigned).length > 0) {
             state.markProcessed(job.id, assigned);
@@ -250,6 +254,8 @@ async function main(): Promise<void> {
           await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
+      // Anti-spam: one summary card per cycle for all jobs assigned this tick.
+      await notifier.notifyAssignments(assignedThisTick);
       health.recordTickSuccess();
     } catch (err) {
       if (isBrowserDeadError(err)) {

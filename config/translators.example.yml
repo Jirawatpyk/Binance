@@ -10,6 +10,8 @@ lo-LA:
 km-KH:
   rules:
     - maxWords: 500
-      translators: [KM_T1@eqho.com]
+      translators: [kh_t1@eqho.com]
+    - maxWords: 2000
+      translators: [kh_t2@eqho.com]
     - maxWords: null
-      translators: [KM_T1@eqho.com, KM_T2@eqho.com]
+      translators: [kh_t3@eqho.com, kh_e2@eqho.com, kh_e3@eqho.com]

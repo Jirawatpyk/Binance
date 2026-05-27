@@ -11,8 +11,9 @@ export class Assigner {
   ) {}
 
   async assign(language: SupportedLanguage, translatorEmail: string, rowIndex: number): Promise<void> {
-    // Re-select the Waiting tab in case a prior assignment switched tabs
-    const waitingTab = this.page.locator('text=Waiting').first();
+    // Re-select the Waiting TAB (role=tab) in case a prior assignment switched
+    // tabs. A plain text= locator matches the "WAITING" status badge, not the tab.
+    const waitingTab = this.page.getByRole('tab', { name: 'Waiting', exact: true });
     if (await waitingTab.isVisible().catch(() => false)) {
       await waitingTab.click();
       // Wait for the Ant spinner to settle before the table read below, so we

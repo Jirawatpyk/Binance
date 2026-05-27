@@ -19,6 +19,7 @@ import { HealthMonitor } from './core/health-monitor.js';
 import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError } from './core/recovery-utils.js';
 import { TranslatorNotFoundError } from './core/errors.js';
+import { isLanguageAssignable } from './assignment/eligibility.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
 const TRANSLATORS_PATH = process.env.TRANSLATORS_PATH ?? './config/translators.yml';
@@ -183,8 +184,7 @@ async function main(): Promise<void> {
           const assigned: Partial<Record<SupportedLanguage, string>> = {};
           const failed: SupportedLanguage[] = [];
           for (const lang of detail.targetLanguages) {
-            if (lang.translator !== null) continue;
-            if (lang.status !== 'WAITING_TRANSLATION' && !lang.status.includes('WAITING')) continue;
+            if (!isLanguageAssignable(lang)) continue; // unassigned AND status === WAITING_TRANSLATION (exact)
             try {
               const pick = engine.pick(lang.code, detail.wordCount);
               await retry(

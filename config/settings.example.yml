@@ -4,7 +4,7 @@ polling:
 
 scan:
   # Only process jobs created within this many hours (avoids huge backlog).
-  lookbackHours: 48
+  lookbackHours: 24
   # Safety cap: never process more than this many candidate jobs per tick.
   maxCandidatesPerTick: 25       # reduced from 50 so worst-case tick stays under watchdog timeout
   detailPageDelayMs: 1500        # courtesy delay between opening job detail pages (rate-limit safety)

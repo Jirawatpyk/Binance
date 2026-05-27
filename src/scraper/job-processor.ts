@@ -9,8 +9,10 @@ export class JobProcessor {
     await this.page.goto(detailUrl, { waitUntil: 'domcontentloaded' });
     await this.page.waitForSelector('text=Word Count', { timeout: 15_000 });
     const wordCount = await this.readWordCount();
-    const waitingTab = this.page.locator('text=Waiting').first();
-    if (await waitingTab.isVisible()) await waitingTab.click();
+    // Select the "Waiting" TAB specifically (role=tab). A plain text= locator
+    // matches the "WAITING" status badge first, not the tab.
+    const waitingTab = this.page.getByRole('tab', { name: 'Waiting', exact: true });
+    if (await waitingTab.isVisible().catch(() => false)) await waitingTab.click();
     // Ant spinner must settle before reading the table — otherwise we may read
     // stale rows from the previously selected tab while the new tab loads.
     await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 10_000 }).catch(() => {});

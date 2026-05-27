@@ -66,6 +66,10 @@ async function main(): Promise<void> {
   }
 
   const notifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, logger);
+  // Low-signal operational alerts (zero-scan / possible selector drift) go to a
+  // separate diagnostics space so they don't clutter the production channel.
+  // Falls back to log-only when GOOGLE_CHAT_TEST_WEBHOOK_URL is unset.
+  const diagNotifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL, logger);
 
   if (!process.env.GOOGLE_CHAT_WEBHOOK_URL) {
     logger.warn('GOOGLE_CHAT_WEBHOOK_URL not set — Google Chat notifications are disabled');
@@ -203,8 +207,13 @@ async function main(): Promise<void> {
       if (candidates.length === 0) {
         health.recordZeroScan();
         const zeros = health.getConsecutiveZeroScans();
-        if (zeros > 0 && zeros % settings.reliability.consecutiveZeroScanAlert === 0) {
-          await notifier.notify(
+        // Alert ONCE when the streak first reaches the threshold; the counter
+        // resets to 0 the next time a scan finds work, which re-arms this. Always
+        // logged, and routed to the diagnostics webhook (not production) to keep
+        // the main channel quiet during genuinely empty-board stretches.
+        if (zeros === settings.reliability.consecutiveZeroScanAlert) {
+          logger.warn('zero-scan streak reached alert threshold', { consecutiveZeroScans: zeros });
+          await diagNotifier.notify(
             `Scanned 0 candidates for ${settings.reliability.consecutiveZeroScanAlert} consecutive ticks — possible selector drift (or genuinely empty board)`,
             'warn'
           );

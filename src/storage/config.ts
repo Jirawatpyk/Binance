@@ -60,15 +60,34 @@ const ruleSchema = z.object({
   translators: z.array(z.string().email()).min(1),
 });
 
-const langConfigSchema = z.object({ rules: z.array(ruleSchema).min(1) }).refine(
-  (c) => c.rules[c.rules.length - 1].maxWords === null,
-  { message: 'the last rule for a language must have maxWords: null (catch-all)' }
-);
+const langConfigSchema = z
+  .object({ rules: z.array(ruleSchema).min(1) })
+  .refine((c) => c.rules[c.rules.length - 1].maxWords === null, {
+    message: 'the last rule for a language must have maxWords: null (catch-all)',
+  })
+  .refine(
+    (c) => {
+      // pick() is first-match, so non-null maxWords must strictly ascend or a
+      // later (smaller) tier becomes unreachable and small jobs match a big tier.
+      const bounds = c.rules.filter((r) => r.maxWords !== null).map((r) => r.maxWords as number);
+      return bounds.every((v, i) => i === 0 || v > bounds[i - 1]);
+    },
+    { message: 'rule maxWords must be in strictly ascending order' }
+  );
 
-const translatorsSchema = z.object({
-  'lo-LA': langConfigSchema.optional(),
-  'km-KH': langConfigSchema.optional(),
-});
+const translatorsSchema = z
+  .object({
+    'lo-LA': langConfigSchema.optional(),
+    'km-KH': langConfigSchema.optional(),
+  })
+  // .strict() rejects unknown/typo'd keys (e.g. lo_LA) instead of silently
+  // ignoring them; the refine guarantees at least one real language is mapped,
+  // so a misconfigured file fails fast at load instead of abandoning every job
+  // of that language at runtime.
+  .strict()
+  .refine((c) => Boolean(c['lo-LA'] || c['km-KH']), {
+    message: 'translators.yml must define at least one of lo-LA or km-KH',
+  });
 
 export function loadSettings(filePath: string): Settings {
   const raw = YAML.parse(readFileSync(filePath, 'utf-8'));

@@ -97,4 +97,49 @@ lo-LA:
 `);
     expect(() => loadTranslators(p)).toThrow();
   });
+
+  it('rejects an empty translators config (no language mapped)', () => {
+    const p = makeTmp('t.yml', `{}`);
+    expect(() => loadTranslators(p)).toThrow();
+  });
+
+  it('rejects an unknown/typo\'d language key', () => {
+    const p = makeTmp('t.yml', `
+lo_LA:
+  rules:
+    - maxWords: null
+      translators: [a@eqho.com]
+`);
+    expect(() => loadTranslators(p)).toThrow();
+  });
+
+  it('rejects rules whose maxWords are not strictly ascending', () => {
+    const p = makeTmp('t.yml', `
+lo-LA:
+  rules:
+    - maxWords: 5000
+      translators: [a@eqho.com]
+    - maxWords: 1000
+      translators: [b@eqho.com]
+    - maxWords: null
+      translators: [c@eqho.com]
+`);
+    expect(() => loadTranslators(p)).toThrow();
+  });
+
+  it('accepts a single-language config with ascending tiers', () => {
+    const p = makeTmp('t.yml', `
+km-KH:
+  rules:
+    - maxWords: 1000
+      translators: [a@eqho.com]
+    - maxWords: 5000
+      translators: [b@eqho.com]
+    - maxWords: null
+      translators: [c@eqho.com]
+`);
+    const t = loadTranslators(p);
+    expect(t['km-KH']?.rules.length).toBe(3);
+    expect(t['lo-LA']).toBeUndefined();
+  });
 });

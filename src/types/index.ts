@@ -40,7 +40,7 @@ export interface TranslatorsConfig {
 
 export interface Settings {
   polling: { intervalMinutes: number; jitterSeconds: number };
-  scan: { lookbackHours: number; maxCandidatesPerTick: number; detailPageDelayMs: number; processedJobRetainHours: number };
+  scan: { lookbackHours: number; maxCandidatesPerTick: number; detailPageDelayMs: number; processedJobRetainHours: number; fullRecheckCooldownMinutes: number };
   browser: { headless: boolean; viewport: { width: number; height: number }; navigationTimeoutMs: number };
   storage: { statePath: string; logsDir: string; cookiesPath: string };
   assignment: { dryRun: boolean; maxRetries: number; retryDelayMs: number; maxPartialRetries: number };
@@ -62,6 +62,10 @@ export interface ProcessedJobEntry {
   assigned: Partial<Record<SupportedLanguage, string>>;
   failed?: SupportedLanguage[];
   retryCount?: number;
+  // FULL jobs that re-opened to nothing assignable (e.g. all rows in
+  // WAITING_REVIEW) are skipped until this time, to avoid re-opening a
+  // board-listed-but-not-claimable job every tick.
+  recheckAfter?: string;
 }
 
 export interface State {

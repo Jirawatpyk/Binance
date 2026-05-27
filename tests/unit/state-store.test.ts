@@ -116,6 +116,19 @@ describe('StateStore', () => {
     expect(e?.assigned).toEqual({ 'km-KH': 'kh_e3@eqho.com', 'lo-LA': 'LO_T4@eqho.com' });
   });
 
+  it('markProcessed sets recheckAfter when given, and a later productive call clears it', async () => {
+    const { store } = newStore();
+    await store.load();
+    const until = new Date(Date.now() + 30 * 60_000).toISOString();
+    // re-opened to nothing assignable → cooldown
+    store.markProcessed('cd1', {}, until);
+    expect(store.getProcessedEntry('cd1')?.recheckAfter).toBe(until);
+    // later a language became claimable and was assigned → cooldown cleared
+    store.markProcessed('cd1', { 'lo-LA': 'a@eqho.com' });
+    expect(store.getProcessedEntry('cd1')?.recheckAfter).toBeUndefined();
+    expect(store.getProcessedEntry('cd1')?.assigned).toEqual({ 'lo-LA': 'a@eqho.com' });
+  });
+
   it('markPartial accumulates assigned across retries', async () => {
     const { store } = newStore();
     await store.load();

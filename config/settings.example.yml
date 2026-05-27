@@ -9,6 +9,7 @@ scan:
   maxCandidatesPerTick: 25       # reduced from 50 so worst-case tick stays under watchdog timeout
   detailPageDelayMs: 1500        # courtesy delay between opening job detail pages (rate-limit safety)
   processedJobRetainHours: 96    # prune processed-job records older than this (state.json bound)
+  fullRecheckCooldownMinutes: 30 # a FULL job that re-opens to nothing assignable (e.g. rows in WAITING_REVIEW) is skipped this long before re-checking
 
 browser:
   headless: true

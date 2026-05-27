@@ -160,13 +160,18 @@ async function main(): Promise<void> {
       }
       for (const job of candidates) {
         const entry = state.getProcessedEntry(job.id);
-        // Skip only jobs we've given up on. Do NOT skip FULL jobs: a job's lo-LA
-        // and km-KH rows can become claimable at different times, and the board
-        // only re-surfaces a job (Available to Claim + language filter) when it
-        // still has claimable work. Re-open it and let the live Waiting-tab read
-        // decide which languages remain — an already-assigned row is no longer
-        // WAITING_TRANSLATION, so isLanguageAssignable skips it (no double-assign).
+        // Skip only jobs we've given up on. Do NOT skip FULL jobs in general: a
+        // job's lo-LA and km-KH rows can become claimable at different times, and
+        // the board only re-surfaces a job (Available to Claim + language filter)
+        // when it still has claimable work. Re-open it and let the live
+        // Waiting-tab read decide which languages remain — an already-assigned
+        // row is no longer WAITING_TRANSLATION, so isLanguageAssignable skips it
+        // (no double-assign). Exception: a FULL job that recently re-opened to
+        // nothing assignable (e.g. rows stuck in WAITING_REVIEW, which the board
+        // still lists as claimable) is on cooldown to avoid re-opening it every
+        // tick for no work.
         if (entry?.status === 'ABANDONED') continue;
+        if (entry?.recheckAfter && Date.now() < new Date(entry.recheckAfter).getTime()) continue;
         if (
           entry?.status === 'PARTIAL' &&
           (entry.retryCount ?? 0) >= settings.assignment.maxPartialRetries
@@ -264,10 +269,15 @@ async function main(): Promise<void> {
               await captureScreenshot(page, settings.storage.logsDir, `empty-detail-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
               persisted = false;
             } else if (failed.length === 0) {
-              // Target-language rows existed but none were assignable (each
-              // already had a translator) → genuinely assigned elsewhere.
-              logger.info('job already fully assigned externally', { jobId: job.id });
-              state.markProcessed(job.id, {});
+              // Target-language rows existed but none were assignable (already
+              // have a translator, or are in WAITING_REVIEW / in progress). Mark
+              // FULL and set a recheck cooldown so the board re-listing this job
+              // (which happens for review-stage rows) doesn't re-open it every tick.
+              const recheckAfter = new Date(
+                Date.now() + settings.scan.fullRecheckCooldownMinutes * 60_000
+              ).toISOString();
+              logger.info('job has no assignable rows — cooling down recheck', { jobId: job.id, recheckAfter });
+              state.markProcessed(job.id, {}, recheckAfter);
             } else {
               logger.error('all language assignments failed for job', { jobId: job.id, failed });
               state.markPartial(job.id, {}, failed);

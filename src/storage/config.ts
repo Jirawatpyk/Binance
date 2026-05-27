@@ -14,6 +14,7 @@ const settingsSchema = z.object({
     maxCandidatesPerTick: z.number().int().positive(),
     detailPageDelayMs: z.number().int().nonnegative(),
     processedJobRetainHours: z.number().positive(),
+    fullRecheckCooldownMinutes: z.number().int().nonnegative(),
   }),
   browser: z.object({
     headless: z.boolean(),

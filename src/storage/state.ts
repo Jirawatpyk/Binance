@@ -51,7 +51,11 @@ export class StateStore {
     return this.state.processedJobs[jobId];
   }
 
-  markProcessed(jobId: string, assigned: Partial<Record<SupportedLanguage, string>>): void {
+  markProcessed(
+    jobId: string,
+    assigned: Partial<Record<SupportedLanguage, string>>,
+    recheckAfter?: string
+  ): void {
     // Merge with any prior assignment: a job's languages can be assigned across
     // separate ticks (e.g. km-KH now, lo-LA once it becomes claimable), so
     // re-marking FULL must not drop the earlier language.
@@ -60,6 +64,9 @@ export class StateStore {
       processedAt: new Date().toISOString(),
       status: 'FULL',
       assigned: { ...prev?.assigned, ...assigned },
+      // Present only when re-opening found nothing assignable (cooldown); a
+      // productive assign omits it so the job stays immediately re-checkable.
+      ...(recheckAfter ? { recheckAfter } : {}),
     };
     this.dirty = true;
   }

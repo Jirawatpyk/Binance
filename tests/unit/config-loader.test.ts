@@ -15,7 +15,7 @@ describe('loadSettings', () => {
   it('parses valid settings yaml', () => {
     const p = makeTmp('s.yml', `
 polling: { intervalMinutes: 5, jitterSeconds: 30 }
-scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
 browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
 storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
@@ -39,7 +39,7 @@ reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: tru
   it('throws on invalid level', () => {
     const p = makeTmp('s.yml', `
 polling: { intervalMinutes: 5, jitterSeconds: 30 }
-scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
 browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
 storage: { statePath: x, logsDir: y, cookiesPath: z }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
@@ -52,7 +52,7 @@ reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: tru
   it('rejects when processedJobRetainHours < lookbackHours', () => {
     const p = makeTmp('s.yml', `
 polling: { intervalMinutes: 5, jitterSeconds: 30 }
-scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 24 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 24, fullRecheckCooldownMinutes: 30 }
 browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
 storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }

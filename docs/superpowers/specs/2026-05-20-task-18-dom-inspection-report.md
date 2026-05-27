@@ -218,3 +218,73 @@ No Assign button inside the modal was clicked at any stage. The modal was closed
 | Modal translator list | Unknown | NOT CONFIRMED — no WAITING_TRANSLATION job available |
 | "My Jobs" filter issue | Not known | NEW FINDING — must verify bot can see all jobs |
 | lo-LA hidden in +N overflow | Not known | NEW FINDING — visible tags only show 3; lo-LA may be hidden |
+
+---
+
+## Filter UI selectors (Approach 1+2)
+
+Verified live against the real board on 2026-05-27 via cookie session (inspect-filters.ts + test-scan.ts).
+
+### Status filter
+
+- Element: `.ant-select` nth(0) — Ant Design single-select, initial value `"My Jobs"`
+- Options discovered: `"Available to Claim"`, `"My Jobs"`, `"High Priority"`, `"Overdue"`, `"History"`
+- How to set: click the select, then click `.ant-select-dropdown:not(.ant-select-dropdown-hidden) .ant-select-item-option` filtered by text `"Available to Claim"`
+
+### Language filter
+
+- Element: `.ant-select` nth(1) — Ant Design **multi-select** + **show-search**, placeholder `"All Languages"`
+- Classes: `ant-select-multiple ant-select-allow-clear ant-select-show-arrow ant-select-show-search`
+- Search input: inside `.ant-select-selector` (input type=search, id=`rc_select_1`) — initially `readOnly: true`; becomes editable after the select is clicked/focused
+- How to set: click the select (opens dropdown), then `page.keyboard.type("lo")` → pick option containing `"lo-LA"` from dropdown
+- Option text format: `"lo-LA - Lao (Laos)"` (with space-dash-space and full language name)
+- km-KH option text: `"km-KH - Khmer (Cambodia)"`
+- To clear selected tag: click `.ant-select-selection-item-remove` (the × on the tag chip)
+
+### Search button
+
+- Selector: `page.locator('button').filter({ hasText: /^Search$/ }).first()`
+- Classes: `ant-btn-primary ant-btn-color-primary ant-btn-variant-solid`
+- Note: the button shows a loading spinner briefly after click — wait for `.ant-spin-spinning` to hide before reading rows
+
+### Clear button
+
+- Selector: `page.locator('button').filter({ hasText: /^Clear$/ }).first()`
+- Classes: `ant-btn-default ant-btn-variant-outlined`
+
+### Pagination
+
+- **NOT** Ant Design `.ant-pagination` component — uses plain Ant Buttons
+- Previous button: `page.locator('button').filter({ hasText: /^Previous$/ })` — has `disabled=""` attribute on page 1
+- Next button: `page.locator('button').filter({ hasText: /^Next$/ })` — not disabled until last page
+- `button:has-text("Next"):not([disabled])` CSS locator returns `isVisible: false` (a different invisible element matches first) — use Playwright `.filter({ hasText: /^Next$/ })` instead
+
+### Live scan() test result (2026-05-27)
+
+`scan()` called with status=`"Available to Claim"`, iterating `lo-LA` and `km-KH`:
+
+| Language | Pages paginated | Jobs found (before dedup) |
+|----------|----------------|--------------------------|
+| lo-LA | 34 pages × 10/page | 316 jobs |
+| km-KH | ~3 pages | 30 jobs (all deduped into lo-LA set) |
+| **Total deduped** | — | **316 candidates** |
+
+Board totals confirmed (via "Total: N" footer):
+- lo-LA filter: Total: 334 (live; volatile due to new jobs being added)
+- km-KH filter: Total: 81
+
+Note: The lo-LA board count (334) and the scanned count (316) differ because:
+1. Jobs may have been assigned/closed between scan start and completion
+2. The first page after `clickSearch` briefly shows empty until spinner clears (handled by `waitForSelector('.ant-spin-spinning', { state: 'hidden' })`)
+
+### Screenshots captured
+
+- `logs/screenshots/task-18b/filters-panel.png` — Job board filters panel, status = "My Jobs"
+- `logs/screenshots/task-18b/status-dropdown.png` — Status dropdown open, options visible
+- `logs/screenshots/task-18b/language-dropdown-opened.png` — Language multi-select opened
+- `logs/screenshots/task-18b/language-search-lo.png` — Typing "lo" shows "lo-LA - Lao (Laos)"
+- `logs/screenshots/task-18b/lo-LA-results.png` — lo-LA filter + Search: Total: 333
+- `logs/screenshots/task-18b/km-KH-results.png` — km-KH filter + Search: Total: 81
+
+### Safety
+No Assign button was clicked. No job state was mutated. All interactions were read-only (navigate, filter, Search, read table, paginate).

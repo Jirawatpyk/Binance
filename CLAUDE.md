@@ -28,7 +28,9 @@ npx vitest run -t "round-robin wraps using modulo"           # single test by na
 
 npm run capture-cookies              # MUST run first — manual login (see 2FA below)
 npm run smoke                        # login-only sanity check
+npm run test:integration             # playwright integration tests
 npm run service:install              # install as Windows service (Admin PowerShell)
+npm run service:uninstall            # remove the Windows service
 ```
 
 There is no linter configured; `npm run typecheck` is the static gate. Unit tests cover only the pure-logic layer (`AssignmentEngine`, `StateStore`, config loader) — browser code (`scraper/`, `auth/`, `assignment/assigner.ts`) has no automated tests and is verified by running `npm run dev` with `dryRun: true`.
@@ -50,6 +52,22 @@ The TMS account has Google Authenticator 2FA, so the bot **cannot** log in with 
 
 `*.yml` working copies, `.env`, `data/`, and `logs/` are gitignored; only the `*.example.yml` files are committed. Bootstrap with `Copy-Item config\settings.example.yml config\settings.yml` etc.
 
+## Domain model
+
+```
+Job (board row)                        StateStore (data/state.json)
+├─ id, name, wordCount                 ├─ processedJobs[id] → { status, assigned, failed?, retryCount? }
+├─ languagesNeeded[]                   │     status: FULL | PARTIAL | ABANDONED
+└─ targetLanguages: TargetLanguage[]   └─ roundRobinCounters[rrKey] → n
+      ├─ code: lo-LA | km-KH
+      ├─ status (e.g. WAITING_TRANSLATION)
+      └─ translator: string | null
+```
+
+- A `TargetLanguage` is assignable only when its status is `WAITING_TRANSLATION` (or contains `WAITING`) **and** `translator === null`.
+- Job lifecycle in `StateStore`: every needed language assigned → **FULL** (skipped forever); some assigned / some failed → **PARTIAL** (retried next tick — only the still-unassigned languages, up to `assignment.maxPartialRetries`); retries exhausted → **ABANDONED** (no longer retried).
+- `AssignmentEngine.pick(lang, wordCount)` walks the tiered `translators.yml` rules (matched by `maxWords`) and round-robins within a tier via `roundRobinCounters[rrKey]`; the counter advances only on a real (non-dry-run) assignment.
+
 ## Architecture
 
 One pass of work is a **tick**, orchestrated in `src/index.ts`. The `Scheduler` fires the first tick immediately, then repeats every `polling.intervalMinutes` (with jitter), skipping a tick if the previous one is still running. Each tick:
@@ -61,7 +79,21 @@ One pass of work is a **tick**, orchestrated in `src/index.ts`. The `Scheduler` 
 
 **Idempotency via `StateStore` (`data/state.json`):** a job is marked `FULL` (skipped forever) only when every language assigned; `PARTIAL` jobs are re-attempted next tick (only the still-unassigned languages, re-checked live). Round-robin counters live here too and are not advanced in dry-run.
 
-**Layer boundary that matters:** `AssignmentEngine` is pure (no Playwright) and fully unit-tested; it takes an `RRReader` so `StateStore` plugs in without coupling. Keep selection logic there and browser interaction in `scraper/` + `assigner.ts`. Cross-cutting helpers live in `src/core/` (`scheduler`, `logger`, `retry`, `lock`, `screenshot`, `errors`).
+Each tick runs inside a watchdog (`runWithWatchdog`) and is skipped early if the session is `PAUSED_AUTH` (see Reliability layer below); only the daily heartbeat still fires while paused.
+
+**Layer boundary that matters:** `AssignmentEngine` is pure (no Playwright) and fully unit-tested; it takes an `RRReader` so `StateStore` plugs in without coupling. Keep selection logic there and browser interaction in `scraper/` + `assigner.ts`. Cross-cutting helpers live in `src/core/` (`scheduler`, `logger`, `retry`, `lock`, `screenshot`, `errors`, plus the reliability modules below).
+
+## Reliability layer (24/7 operation)
+
+Each tick is wrapped to survive failures without crashing the scheduler:
+
+- **`HealthMonitor` (`data/health.json`)** — records tick/assignment metrics and auth episodes. Sends a once-a-day **heartbeat** summary at `reliability.monitoring.dailySummaryTime` (fires regardless of auth/work state), and alerts when `reliability.monitoring.consecutiveErrorAlert` ticks error in a row. Dry-run is excluded from metrics.
+- **`ReAuthManager`** — when the cookie session expires the bot **pauses** (PAUSED_AUTH) and alerts instead of crashing, then resumes once cookies are refreshed manually (`npm run capture-cookies`). It never password-logs-in.
+- **`runWithWatchdog`** — if a tick hangs beyond `reliability.watchdog.tickTimeoutMs` the process hard-exits so the Windows service auto-restarts it.
+- **Recovery** — `isBrowserDeadError` bubbles up to rebuild the page via `session.recover()`; corrupt `state.json`/`health.json` are recovered rather than fatal (`core/recovery-utils.ts`).
+- **Maintenance** — at startup and once daily the bot prunes processed jobs older than `scan.processedJobRetainHours` and deletes screenshots older than `logging.screenshotRetainDays`, bounding disk growth. Daily maintenance is best-effort and never aborts a tick.
+
+`reliability.*` (watchdog / reauth / monitoring) lives in `config/settings.yml`.
 
 ## Working with the live site (important gotchas)
 
@@ -75,6 +107,13 @@ One pass of work is a **tick**, orchestrated in `src/index.ts`. The `Scheduler` 
 - ESM TypeScript (`"type": "module"`, `NodeNext`); import local modules with the `.js` extension. Node 20+ (uses global `fetch`).
 - Structured JSON logs via winston (`logs/app-*.log`, `logs/error-*.log`) — kept JSON-structured intentionally so the Phase 2 dashboard can ingest them.
 - Commit style: Conventional Commits (`feat(scope):`, `fix(scope):`, `docs(scope):`); small, single-purpose commits.
+
+## Known gaps & constraints
+
+- **Browser layer has no automated tests by design** — `scraper/`, `auth/`, `assignment/assigner.ts` are verified by running `npm run dev` with `dryRun: true` against the live site, not by unit tests. Only the pure-logic layer is unit-tested.
+- **Assign success toast selector is unverified** — `.ant-message-success` / `.ant-notification-notice-success` in `assigner.ts` were never observed on a real assignment (the DOM inspection closed the modal without assigning). Confirm against a live `dryRun: false` run; success currently also falls back to "modal closed".
+- **Selectors track a live third-party Ant Design UI** — they break when the site changes; always re-verify against `docs/superpowers/specs/2026-05-20-task-18-dom-inspection-report.md`.
+- **Phase 2 tracking dashboard is not built** — the JSON-structured winston logs exist to feed it later.
 
 <!-- SPECKIT START -->
 For additional context about technologies to be used, project structure,

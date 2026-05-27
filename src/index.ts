@@ -145,6 +145,7 @@ async function main(): Promise<void> {
 
     const assignedThisTick: AssignmentSummaryItem[] = [];
     try {
+      health.recordPoll(); // a real board poll (we're past the auth-pause gate)
       const candidates = await scanner.scan();
       if (candidates.length === 0) {
         health.recordZeroScan();

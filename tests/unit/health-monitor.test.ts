@@ -90,7 +90,8 @@ describe('HealthMonitor', () => {
 
   it('dailySummaryStats returns counts, per-language, polls, uptime, last activity', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
-    monitor.recordTickStart(new Date(2026, 4, 7, 8, 0)); // 1 poll today
+    monitor.recordTickStart(new Date(2026, 4, 7, 8, 0));
+    monitor.recordPoll(); // 1 real board poll today
     monitor.recordAssignment(true, 'lo-LA', new Date(2026, 4, 7, 8, 30));
     monitor.recordAssignment(true, 'km-KH', new Date(2026, 4, 7, 8, 31));
     monitor.recordJobAssigned();

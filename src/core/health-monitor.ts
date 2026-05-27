@@ -69,8 +69,13 @@ export class HealthMonitor {
 
   recordTickStart(now: Date = new Date()): void {
     this.rollover(now);
-    this.state.today.ticks += 1;
     this.state.lastTickAt = now.toISOString();
+  }
+
+  /** Count one real board poll (called only when the tick actually scans — not
+   *  when it returns early paused for auth), so "polls today" reflects real work. */
+  recordPoll(): void {
+    this.state.today.ticks += 1;
   }
 
   recordTickSuccess(now: Date = new Date()): void {

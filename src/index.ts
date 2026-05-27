@@ -171,6 +171,11 @@ async function main(): Promise<void> {
         // still lists as claimable) is on cooldown to avoid re-opening it every
         // tick for no work.
         if (entry?.status === 'ABANDONED') continue;
+        // Tradeoff: the cooldown is status-blind, so if a NEW language on this
+        // job becomes claimable mid-cooldown its pickup is delayed by up to
+        // scan.fullRecheckCooldownMinutes. That self-heals on the next expiry
+        // (which forces exactly one re-open), and a corrupt timestamp → NaN →
+        // does not skip (fail-open toward doing work).
         if (entry?.recheckAfter && Date.now() < new Date(entry.recheckAfter).getTime()) continue;
         if (
           entry?.status === 'PARTIAL' &&

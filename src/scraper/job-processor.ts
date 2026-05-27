@@ -35,7 +35,7 @@ export class JobProcessor {
       const code = this.detectCode(langText);
       if (!code) continue;
       const translatorText = (await row.locator('td').nth(2).textContent() ?? '').trim();
-      const statusText = (await row.locator('[class*="status"], td:has-text("WAITING"), td:has-text("IN_PROGRESS")').first().textContent() ?? '').trim();
+      const statusText = (await row.locator('td').nth(5).textContent() ?? '').trim();
       out.push({
         code,
         status: statusText || 'UNKNOWN',

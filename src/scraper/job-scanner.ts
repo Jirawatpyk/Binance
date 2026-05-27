@@ -71,21 +71,21 @@ export class JobScanner {
       }> = [];
       for (const row of rowEls) {
         const cells = row.querySelectorAll('td, [role="cell"]');
-        if (cells.length < 8) continue;
-        const idText = cells[0]?.textContent?.trim() ?? '';
+        if (cells.length < 10) continue;
+        const idText = cells[1]?.textContent?.trim() ?? '';
         if (!/^\d+$/.test(idText)) continue;
-        const langTags = Array.from(cells[6].querySelectorAll('[class*="tag"], span, .badge'))
+        const langTags = Array.from(cells[7].querySelectorAll('[class*="tag"], span, .badge'))
           .map((el) => el.textContent?.trim() ?? '')
           .filter((s) => s.length > 0 && !s.startsWith('+'));
-        const openLink = (row.querySelector('a[href*="job"], button[data-href]') as HTMLAnchorElement | null);
+        const openLink = (row.querySelector('a[href*="job"]') as HTMLAnchorElement | null);
         out.push({
           id: idText,
-          name: cells[1]?.textContent?.trim() ?? '',
-          dueDate: cells[2]?.textContent?.trim() ?? '',
-          project: cells[4]?.textContent?.trim() ?? '',
-          languageCount: Number(cells[5]?.textContent?.trim() ?? 0),
+          name: cells[2]?.textContent?.trim() ?? '',
+          dueDate: cells[3]?.textContent?.trim() ?? '',
+          project: cells[5]?.textContent?.trim() ?? '',
+          languageCount: Number(cells[6]?.textContent?.trim() ?? 0),
           languagesNeeded: langTags,
-          wordCount: Number(cells[7]?.textContent?.trim().replace(/,/g, '') ?? 0),
+          wordCount: Number(cells[8]?.textContent?.trim().replace(/,/g, '') ?? 0),
           detailUrl: openLink?.href ?? `https://www.translationtms.com/job/${idText}`,
         });
       }

@@ -65,12 +65,21 @@ export class StateStore {
     assigned: Partial<Record<SupportedLanguage, string>>,
     failed: SupportedLanguage[]
   ): void {
+    const prev = this.state.processedJobs[jobId];
     this.state.processedJobs[jobId] = {
       processedAt: new Date().toISOString(),
       status: 'PARTIAL',
       assigned,
       failed,
+      retryCount: (prev?.retryCount ?? 0) + 1,
     };
+    this.dirty = true;
+  }
+
+  markAbandoned(jobId: string): void {
+    const prev = this.state.processedJobs[jobId];
+    if (!prev) return;
+    this.state.processedJobs[jobId] = { ...prev, status: 'ABANDONED' };
     this.dirty = true;
   }
 

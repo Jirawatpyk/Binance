@@ -86,4 +86,22 @@ describe('StateStore', () => {
     await expect(store.load()).resolves.toBeUndefined();
     expect(store.isProcessed('anything')).toBe(false);
   });
+
+  it('increments retryCount across repeated markPartial', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markPartial('p1', {}, ['km-KH']);
+    store.markPartial('p1', {}, ['km-KH']);
+    expect(store.getProcessedEntry('p1')?.retryCount).toBe(2);
+    expect(store.isProcessed('p1')).toBe(false); // PARTIAL not FULL
+  });
+
+  it('markAbandoned flips status and isProcessed stays false', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markPartial('p2', {}, ['km-KH']);
+    store.markAbandoned('p2');
+    expect(store.getProcessStatus('p2')).toBe('ABANDONED');
+    expect(store.isProcessed('p2')).toBe(false);
+  });
 });

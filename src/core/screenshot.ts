@@ -5,11 +5,22 @@ import type { Page } from 'playwright';
 export async function captureScreenshot(
   page: Page,
   logsDir: string,
-  context: string
-): Promise<string> {
+  context: string,
+  maxPerDay = 0
+): Promise<string | null> {
   const today = new Date().toISOString().slice(0, 10);
   const dir = path.join(logsDir, 'screenshots', today);
   await fs.mkdir(dir, { recursive: true });
+
+  // Per-day cap: skip writing if we've already hit the limit
+  if (maxPerDay > 0) {
+    const existing = await fs.readdir(dir).catch(() => [] as string[]);
+    const pngCount = existing.filter((f) => f.endsWith('.png')).length;
+    if (pngCount >= maxPerDay) {
+      return null;
+    }
+  }
+
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
   const safeContext = context.replace(/[^a-zA-Z0-9_-]/g, '_');
   const file = path.join(dir, `${timestamp}_${safeContext}.png`);

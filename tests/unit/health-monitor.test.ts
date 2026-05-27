@@ -124,4 +124,13 @@ describe('HealthMonitor', () => {
     await expect(m.load()).resolves.toBeUndefined();
     expect(m.snapshot().today.assigned).toBe(0); // fresh
   });
+
+  it('tracks consecutive zero scans and resets', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    monitor.recordZeroScan();
+    monitor.recordZeroScan();
+    expect(monitor.getConsecutiveZeroScans()).toBe(2);
+    monitor.resetZeroScans();
+    expect(monitor.getConsecutiveZeroScans()).toBe(0);
+  });
 });

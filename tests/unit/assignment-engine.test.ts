@@ -69,4 +69,10 @@ describe('AssignmentEngine.pick', () => {
     const engine = new AssignmentEngine({}, { getRRIndex: () => 0 });
     expect(() => engine.pick('lo-LA', 100)).toThrow();
   });
+
+  it('picks the middle tier just above the lower boundary (501)', () => {
+    const r = makeEngine().pick('lo-LA', 501);
+    expect(r.translator).toBe('LO_T3@eqho.com'); // 501 > 500 → tier 2 (maxWords: 2000)
+    expect(r.ruleIndex).toBe(1);
+  });
 });

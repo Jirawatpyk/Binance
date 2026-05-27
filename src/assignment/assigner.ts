@@ -11,7 +11,15 @@ export class Assigner {
   ) {}
 
   async assign(language: SupportedLanguage, translatorEmail: string, rowIndex: number): Promise<void> {
-    const row = this.page.locator('table tbody tr').nth(rowIndex);
+    // Re-select the Waiting tab in case a prior assignment switched tabs
+    const waitingTab = this.page.locator('text=Waiting').first();
+    if (await waitingTab.isVisible().catch(() => false)) {
+      await waitingTab.click();
+      await this.page.waitForSelector('table tbody tr', { timeout: 10_000 }).catch(() => {});
+    }
+
+    // Locate the target row by language text (not by index — index shifts after assignments)
+    const row = this.page.locator('table tbody tr').filter({ hasText: language }).first();
     const assignBtn = row.locator('button:has-text("Assign")').first();
     if (!(await assignBtn.isVisible())) {
       throw new AssignmentFailedError('Assign button not visible', { language, rowIndex });

@@ -15,6 +15,7 @@ interface HealthState {
   lastTickAt: string | null;
   lastSuccessAt: string | null;
   consecutiveErrors: number;
+  consecutiveZeroScans: number;
   today: TodayCounters;
   lastDailySummaryDate: string | null;
 }
@@ -28,6 +29,7 @@ export class HealthMonitor {
       lastTickAt: null,
       lastSuccessAt: null,
       consecutiveErrors: 0,
+      consecutiveZeroScans: 0,
       today: { date: localDateString(now), assigned: 0, jobsAssigned: 0, failed: 0, authEpisodes: 0 },
       lastDailySummaryDate: null,
     };
@@ -82,6 +84,10 @@ export class HealthMonitor {
   recordAuthEpisode(): void {
     this.state.today.authEpisodes += 1;
   }
+
+  recordZeroScan(): void { this.state.consecutiveZeroScans += 1; }
+  resetZeroScans(): void { this.state.consecutiveZeroScans = 0; }
+  getConsecutiveZeroScans(): number { return this.state.consecutiveZeroScans; }
 
   shouldAlertErrorRate(threshold: number): boolean {
     return this.state.consecutiveErrors > 0 && this.state.consecutiveErrors % threshold === 0;

@@ -1,7 +1,7 @@
 import type { Page } from 'playwright';
 import { type Job, SUPPORTED_LANGUAGES } from '../types/index.js';
 import type winston from 'winston';
-import { parseCreatedUtc } from './date-utils.js';
+import { parseCreatedUtc, formatBoardDate } from './date-utils.js';
 
 const JOB_BOARD_URL = 'https://www.translationtms.com/job-board';
 
@@ -133,8 +133,8 @@ export class JobScanner {
    * The RangePicker at index 0 is "Due Date From/To"; index 1 is "Created From/To".
    */
   private async setDateFilter(from: Date, to: Date): Promise<void> {
-    const fromStr = this.formatDate(from);
-    const toStr = this.formatDate(to);
+    const fromStr = formatBoardDate(from);
+    const toStr = formatBoardDate(to);
 
     // Close any open dropdowns first
     await this.page.keyboard.press('Escape');
@@ -190,18 +190,6 @@ export class JobScanner {
     const fromVal = await fromInput.inputValue().catch(() => '?');
     const toVal = await rangeInputs.nth(1).inputValue().catch(() => '?');
     this.logger.debug('date filter set', { fromStr, toStr, fromAccepted: fromVal, toAccepted: toVal });
-  }
-
-  /**
-   * Format a Date as "YYYY-MM-DD HH:mm:ss" — the format the board's date picker accepts.
-   * Verified live on 2026-05-27 via inspect-dates.ts.
-   */
-  private formatDate(d: Date): string {
-    const pad = (n: number) => String(n).padStart(2, '0');
-    return (
-      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
-      `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
-    );
   }
 
   /**
@@ -291,9 +279,19 @@ export class JobScanner {
     const seenIds = new Set<string>();
     const MAX_PAGES = 50; // safety cap: 50 pages × 10/page = 500 jobs max per language
     let hitCap = false;
+    let prevPageIdSignature = ''; // stuck-detection: if page ids repeat, Next didn't advance
 
     for (let pageNum = 1; pageNum <= MAX_PAGES; pageNum++) {
       const rows = await this.parseRows();
+
+      // Stuck-detection: if this page has the exact same ids as the previous page, Next didn't advance
+      const currentPageIdSignature = rows.map((r) => r.id).sort().join(',');
+      if (pageNum > 1 && currentPageIdSignature === prevPageIdSignature) {
+        this.logger.warn('pagination stuck (page ids unchanged after Next click); breaking', { lang, pageNum });
+        break;
+      }
+      prevPageIdSignature = currentPageIdSignature;
+
       for (const r of rows) {
         if (!seenIds.has(r.id)) {
           seenIds.add(r.id);

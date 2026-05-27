@@ -141,12 +141,12 @@ async function main(): Promise<void> {
         rebuildPipeline(page);
       } else {
         logger.error('tick failed', { error: (err as Error).message });
-      }
-      if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
-        await notifier.notify(
-          `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
-          'error'
-        );
+        if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
+          await notifier.notify(
+            `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
+            'error'
+          );
+        }
       }
     }
 
@@ -163,6 +163,8 @@ async function main(): Promise<void> {
       logger.error('tick hung beyond watchdog timeout; exiting for service restart', {
         tickTimeoutMs: settings.reliability.watchdog.tickTimeoutMs,
       });
+      // Hard-exit safety net: fires even if notify hangs in a wedged event loop.
+      setTimeout(() => process.exit(1), 6_000).unref();
       void notifier
         .notify('Bot tick hung — exiting for auto-restart', 'error')
         .catch(() => {})

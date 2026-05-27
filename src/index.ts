@@ -89,6 +89,10 @@ async function main(): Promise<void> {
   }
 
   let lastBrowserStart = Date.now();
+  // Warn once when the session token drops under this many minutes to expiry;
+  // re-armed automatically if a refresh extends it.
+  const SESSION_EXPIRY_WARN_MIN = 90;
+  let expiryAlerted = false;
 
   // One-time maintenance at startup: bound state.json and screenshot disk usage.
   const prunedAtStart = state.pruneOldJobs(settings.scan.processedJobRetainHours);
@@ -349,6 +353,29 @@ async function main(): Promise<void> {
         }
       }
       health.recordTickSuccess();
+
+      // Session maintenance (best-effort; never fail the tick):
+      //  1) Persist the current session so any JWT the app refreshed this tick
+      //     survives a restart (the stale-snapshot-on-restart problem).
+      //  2) Warn before the token expires so it can be refreshed proactively.
+      try {
+        await session.saveSession();
+        const expMs = await session.getAuthExpiryMs();
+        if (expMs !== null) {
+          const minsLeft = Math.round((expMs - Date.now()) / 60_000);
+          if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted) {
+            await notifier.notify(
+              `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,
+              'warn'
+            );
+            expiryAlerted = true;
+          } else if (minsLeft > SESSION_EXPIRY_WARN_MIN) {
+            expiryAlerted = false; // token was refreshed/extended — re-arm the warning
+          }
+        }
+      } catch (e) {
+        logger.warn('session maintenance failed (non-fatal)', { error: (e as Error).message });
+      }
     } catch (err) {
       if (isBrowserDeadError(err)) {
         logger.error('browser died; recovering', { error: (err as Error).message });

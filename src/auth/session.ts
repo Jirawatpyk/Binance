@@ -5,12 +5,19 @@ import type { Browser, BrowserContext, Page } from 'playwright';
 import { promises as fs } from 'fs';
 import type { Settings } from '../types/index.js';
 import { LoginFailedError } from '../core/errors.js';
+import { jwtExpiryMs } from './jwt.js';
 import type winston from 'winston';
 
 chromium.use(StealthPlugin());
 
 const JOB_BOARD_URL = 'https://www.translationtms.com/job-board';
 const LOGIN_PAGE_INDICATOR = '/login';
+// A dead cookie session renders the board briefly, then redirects to /login
+// CLIENT-SIDE (after hydration, ~1-2s). So we can't decide auth from the first
+// frame — we wait this long for the login form to appear; if it never does, the
+// session is valid. Healthy ticks pay this latency once per tick (every few
+// minutes), which is acceptable for correct re-auth detection.
+const LOGIN_REDIRECT_PROBE_MS = 6_000;
 
 export class AuthSession {
   private browser?: Browser;
@@ -68,7 +75,20 @@ export class AuthSession {
       await this.rebuildContext();
     }
     await this.page.goto(JOB_BOARD_URL, { waitUntil: 'domcontentloaded' });
-    if (this.page.url().includes(LOGIN_PAGE_INDICATOR)) {
+
+    // This is an Ant Design SPA: when the cookie session is dead it renders the
+    // board for a moment, then redirects to /login CLIENT-SIDE after hydration.
+    // Checking the URL right after domcontentloaded races that redirect and
+    // reports a false "valid" — the bot then fails every tick on a confusing
+    // table-wait timeout instead of pausing for re-auth. So wait briefly for the
+    // login form to surface; a healthy session never shows it.
+    const loginFormAppeared = await this.page
+      .waitForSelector('input[type="password"]', { timeout: LOGIN_REDIRECT_PROBE_MS })
+      .then(() => true)
+      .catch(() => false);
+    const expired = loginFormAppeared || this.page.url().includes(LOGIN_PAGE_INDICATOR);
+
+    if (expired) {
       throw new LoginFailedError(`Session expired. Run 'npm run capture-cookies' to log in again.`);
     }
     this.logger.info('session valid (cookie-based)');
@@ -77,6 +97,30 @@ export class AuthSession {
   getPage(): Page {
     if (!this.page) throw new LoginFailedError('Session not started');
     return this.page;
+  }
+
+  /**
+   * Persist the CURRENT browser session (cookies + localStorage, incl. any JWT
+   * the TMS app refreshed client-side this tick) back to cookies.json — so a
+   * restart reloads the latest token instead of the stale captured snapshot.
+   * We bump lastCookieMtime so this self-write doesn't trip the "cookies changed
+   * on disk → rebuild context" check in ensureLoggedIn. Best-effort.
+   */
+  async saveSession(): Promise<void> {
+    if (!this.context) return;
+    const cookiesPath = this.settings.storage.cookiesPath;
+    await this.context.storageState({ path: cookiesPath });
+    const st = await fs.stat(cookiesPath).catch(() => null);
+    if (st) this.lastCookieMtime = st.mtimeMs;
+  }
+
+  /** Expiry (epoch ms) of the live auth_token in the page's localStorage, or null. */
+  async getAuthExpiryMs(): Promise<number | null> {
+    if (!this.page) return null;
+    const token = await this.page
+      .evaluate(() => window.localStorage.getItem('auth_token'))
+      .catch(() => null);
+    return jwtExpiryMs(token);
   }
 
   isAlive(): boolean {

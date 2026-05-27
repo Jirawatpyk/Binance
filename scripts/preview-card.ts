@@ -2,11 +2,12 @@ import 'dotenv/config';
 import { buildAssignmentSummaryCard, buildDailySummaryCard } from '../src/notifications/google-chat.js';
 
 // Sends sample cards to Google Chat so the card designs can be eyeballed in the
-// real client. Prefers GOOGLE_CHAT_TEST_WEBHOOK_URL (a throwaway space) so
-// previews never hit the production space. Run: npx tsx scripts/preview-card.ts
-const url = process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL ?? process.env.GOOGLE_CHAT_WEBHOOK_URL;
+// real client. Requires GOOGLE_CHAT_TEST_WEBHOOK_URL (a throwaway space) — there
+// is deliberately NO fallback to the production webhook, so previews can never
+// hit the production space. Run: npx tsx scripts/preview-card.ts
+const url = process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL;
 if (!url) {
-  console.error('Set GOOGLE_CHAT_TEST_WEBHOOK_URL (or GOOGLE_CHAT_WEBHOOK_URL) in .env');
+  console.error('Set GOOGLE_CHAT_TEST_WEBHOOK_URL in .env (a non-production Chat space) to preview cards.');
   process.exit(1);
 }
 

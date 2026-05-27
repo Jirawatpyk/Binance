@@ -1,30 +1,24 @@
 import 'dotenv/config';
-import { chromium } from 'playwright-extra';
-// @ts-ignore — puppeteer-extra plugin types
-import StealthPlugin from 'puppeteer-extra-plugin-stealth';
+import { loadSettings } from '../src/storage/config.js';
+import { createLogger } from '../src/core/logger.js';
+import { AuthSession } from '../src/auth/session.js';
 
-chromium.use(StealthPlugin());
-
+// Login-only sanity check: confirm the captured cookie session still reaches the
+// Job Board. The bot is cookie-based (2FA, no runtime password), so this never
+// uses TMS credentials. Run `npm run capture-cookies` first if it fails.
+// Usage: npx tsx scripts/smoke.ts
 async function main(): Promise<void> {
-  const username = process.env.TMS_USERNAME;
-  const password = process.env.TMS_PASSWORD;
-  if (!username || !password) throw new Error('Missing TMS credentials');
+  const settings = loadSettings(process.env.SETTINGS_PATH ?? './config/settings.yml');
+  settings.browser.headless = false; // visible so a human can eyeball the board
+  const logger = createLogger({ level: 'info', logsDir: settings.storage.logsDir, rotateDays: 1 });
 
-  const browser = await chromium.launch({ headless: false });
-  const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
-  const page = await ctx.newPage();
-  await page.goto('https://www.translationtms.com/login');
-  await page.fill('input[type="email"], input[name="email"]', username);
-  await page.fill('input[type="password"]', password);
-  await Promise.all([
-    page.waitForURL(/job-board|dashboard/i, { timeout: 30000 }),
-    page.click('button[type="submit"]'),
-  ]);
-  console.log('SMOKE OK — logged in, landed at:', page.url());
-  await browser.close();
+  const session = new AuthSession(settings, logger);
+  const page = await session.start(); // throws LoginFailedError if cookies are missing/expired
+  console.log('SMOKE OK — cookie session valid, landed at:', page.url());
+  await session.close();
 }
 
 main().catch((err) => {
-  console.error('SMOKE FAIL:', err);
+  console.error('SMOKE FAIL:', (err as Error).message);
   process.exit(1);
 });

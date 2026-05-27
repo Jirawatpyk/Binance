@@ -19,19 +19,32 @@ if (!ctx) {
   process.exit(1);
 }
 
+// Match the host exactly (not a substring) so a look-alike domain can't leak in.
+const TMS = /(^|\.)translationtms\.com$/i;
 const state = await ctx.storageState();
-// Keep ONLY translationtms.com cookies — never write your whole cookie jar.
-const cookies = state.cookies.filter((c) => c.domain.includes('translationtms'));
-const origins = state.origins.filter((o) => o.origin.includes('translationtms'));
+// Keep ONLY translationtms.com cookies + localStorage origins — never write your
+// whole jar. NOTE: TMS auth is a JWT in localStorage, so `origins` is the part
+// that actually carries the session; cookies are usually empty.
+const cookies = state.cookies.filter((c) => TMS.test(c.domain.replace(/^\./, '')));
+const origins = state.origins.filter((o) => {
+  try {
+    return TMS.test(new URL(o.origin).hostname);
+  } catch {
+    return false;
+  }
+});
 
-if (cookies.length === 0) {
-  console.error('❌ No translationtms.com cookies found in that Chrome. Open/login to the site there first.');
+const lsCount = origins.reduce((n, o) => n + (o.localStorage?.length ?? 0), 0);
+if (lsCount === 0 && cookies.length === 0) {
+  console.error('❌ No translationtms.com session found in that Chrome (no localStorage/cookies). Open/login to the site there first.');
   process.exit(1);
 }
 
 await fs.mkdir(path.dirname(COOKIES_PATH), { recursive: true });
+// Back up the current session first, so a bad import is recoverable.
+await fs.copyFile(COOKIES_PATH, `${COOKIES_PATH}.bak.${Date.now()}`).catch(() => {});
 await fs.writeFile(COOKIES_PATH, JSON.stringify({ cookies, origins }, null, 2), 'utf-8');
-console.log(`✅ Saved ${cookies.length} translationtms.com cookie(s) → ${COOKIES_PATH}`);
+console.log(`✅ Saved ${cookies.length} cookie(s) + ${lsCount} localStorage item(s) for translationtms.com → ${COOKIES_PATH}`);
 console.log('   (your Chrome is untouched; verify with: npx tsx scripts/check-session.ts)');
 // NOTE: do NOT browser.close() — that would close your real Chrome. Just exit.
 process.exit(0);

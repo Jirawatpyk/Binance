@@ -15,8 +15,18 @@ export class StateStore {
       if (!this.state.processedJobs) this.state.processedJobs = {};
       if (!this.state.roundRobinCounters) this.state.roundRobinCounters = {};
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-      this.state = { processedJobs: {}, roundRobinCounters: {} };
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') {
+        this.state = { processedJobs: {}, roundRobinCounters: {} };
+        return;
+      }
+      if (err instanceof SyntaxError) {
+        const backup = `${this.filePath}.corrupt.${Date.now()}`;
+        await fs.rename(this.filePath, backup).catch(() => {});
+        this.state = { processedJobs: {}, roundRobinCounters: {} };
+        return;
+      }
+      throw err;
     }
   }
 
@@ -71,5 +81,19 @@ export class StateStore {
   incrementRR(key: string): void {
     this.state.roundRobinCounters[key] = (this.state.roundRobinCounters[key] ?? 0) + 1;
     this.dirty = true;
+  }
+
+  /** Remove processed-job records older than retainHours. Returns count removed. */
+  pruneOldJobs(retainHours: number): number {
+    const cutoff = Date.now() - retainHours * 3_600_000;
+    let removed = 0;
+    for (const [id, entry] of Object.entries(this.state.processedJobs)) {
+      if (new Date(entry.processedAt).getTime() < cutoff) {
+        delete this.state.processedJobs[id];
+        removed += 1;
+      }
+    }
+    if (removed > 0) this.dirty = true;
+    return removed;
   }
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync } from 'fs';
+import { mkdtempSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { HealthMonitor } from '../../src/core/health-monitor.js';
@@ -42,14 +42,18 @@ describe('HealthMonitor', () => {
 
   it('shouldAlertErrorRate fires exactly when reaching threshold', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
-    monitor.recordTickError();
+    monitor.recordTickError(); // 1
     expect(monitor.shouldAlertErrorRate(3)).toBe(false);
-    monitor.recordTickError();
+    monitor.recordTickError(); // 2
     expect(monitor.shouldAlertErrorRate(3)).toBe(false);
-    monitor.recordTickError();
+    monitor.recordTickError(); // 3
     expect(monitor.shouldAlertErrorRate(3)).toBe(true);
-    monitor.recordTickError();
+    monitor.recordTickError(); // 4
     expect(monitor.shouldAlertErrorRate(3)).toBe(false);
+    monitor.recordTickError(); // 5
+    expect(monitor.shouldAlertErrorRate(3)).toBe(false);
+    monitor.recordTickError(); // 6
+    expect(monitor.shouldAlertErrorRate(3)).toBe(true); // re-fires at multiples
   });
 
   it('rolls over counters on a new day', () => {
@@ -58,6 +62,17 @@ describe('HealthMonitor', () => {
     monitor.recordTickStart(new Date(2026, 4, 8, 0, 5));
     expect(monitor.snapshot().today.assigned).toBe(0);
     expect(monitor.snapshot().today.date).toBe('2026-05-08');
+  });
+
+  it('rollover clears assigned, jobsAssigned, failed, and authEpisodes', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    monitor.recordAssignment(true);
+    monitor.recordJobAssigned();
+    monitor.recordAssignment(false);
+    monitor.recordAuthEpisode();
+    monitor.recordTickStart(new Date(2026, 4, 8, 0, 5));
+    const t = monitor.snapshot().today;
+    expect([t.assigned, t.jobsAssigned, t.failed, t.authEpisodes]).toEqual([0, 0, 0, 0]);
   });
 
   it('persists and reloads', async () => {
@@ -76,9 +91,37 @@ describe('HealthMonitor', () => {
   it('buildDailySummary includes counts', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
     monitor.recordAssignment(true);
+    monitor.recordJobAssigned();
     monitor.recordAuthEpisode();
     const text = monitor.buildDailySummary(new Date(2026, 4, 7, 9, 0));
     expect(text).toMatch(/assigned/i);
     expect(text).toContain('1');
+    expect(text).toContain('assigned 1 language(s) across 1 job(s)');
+  });
+
+  it('defaults jobsAssigned to 0 when loading a pre-jobsAssigned health.json', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
+    const file = path.join(dir, 'health.json');
+    writeFileSync(file, JSON.stringify({
+      startedAt: '2026-05-07T00:00:00.000Z', lastTickAt: null, lastSuccessAt: null,
+      consecutiveErrors: 0,
+      today: { date: '2026-05-07', assigned: 5, failed: 2, authEpisodes: 1 },
+      lastDailySummaryDate: null,
+    }));
+    const m = new HealthMonitor(file, new Date(2026, 4, 7, 8, 0));
+    await m.load();
+    expect(m.snapshot().today.jobsAssigned).toBe(0);
+    expect(m.snapshot().today.assigned).toBe(5);
+    m.recordJobAssigned();
+    expect(m.snapshot().today.jobsAssigned).toBe(1);
+  });
+
+  it('recovers from a corrupt health.json by starting fresh', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
+    const file = path.join(dir, 'health.json');
+    writeFileSync(file, '{ this is not valid json');
+    const m = new HealthMonitor(file, new Date(2026, 4, 7, 8, 0));
+    await expect(m.load()).resolves.toBeUndefined();
+    expect(m.snapshot().today.assigned).toBe(0); // fresh
   });
 });

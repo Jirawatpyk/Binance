@@ -29,4 +29,10 @@ describe('isDailySummaryDue', () => {
   it('due again the next day after past sent date', () => {
     expect(isDailySummaryDue(new Date(2026, 4, 8, 9, 1), '09:00', '2026-05-07')).toBe(true);
   });
+  it('is due at exactly the summary time (>= boundary)', () => {
+    expect(isDailySummaryDue(new Date(2026, 4, 7, 9, 0), '09:00', null)).toBe(true);
+  });
+  it('summaryTime 00:00 is due at midnight', () => {
+    expect(isDailySummaryDue(new Date(2026, 4, 7, 0, 0), '00:00', null)).toBe(true);
+  });
 });

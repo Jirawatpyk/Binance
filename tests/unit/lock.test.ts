@@ -35,4 +35,15 @@ describe('ProcessLock', () => {
     const lock = new ProcessLock(p);
     await expect(lock.acquire()).rejects.toBeInstanceOf(LockHeldError);
   });
+
+  it('does NOT clear a lock with unparseable content (treats as held)', async () => {
+    const p = lockPath();
+    writeFileSync(p, 'garbage-no-pid');
+    await expect(new ProcessLock(p).acquire()).rejects.toBeInstanceOf(LockHeldError);
+    expect(existsSync(p)).toBe(true);
+  });
+
+  it('release is a no-op when the lock file is absent', async () => {
+    await expect(new ProcessLock(lockPath()).release()).resolves.toBeUndefined();
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, existsSync } from 'fs';
+import { mkdtempSync, existsSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { StateStore } from '../../src/storage/state.js';
@@ -55,5 +55,35 @@ describe('StateStore', () => {
     await store2.load();
     expect(store2.isProcessed('61514')).toBe(true);
     expect(store2.getRRIndex('lo-LA:rule2')).toBe(1);
+  });
+
+  it('prunes processed jobs older than retain window', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markProcessed('111', { 'lo-LA': 'a@eqho.com' });
+    // recent job should NOT be pruned when retainHours is 24
+    const removedRecent = store.pruneOldJobs(24);
+    expect(removedRecent).toBe(0);
+    expect(store.isProcessed('111')).toBe(true);
+  });
+
+  it('prunes a job whose processedAt is older than retainHours', async () => {
+    const { store, file } = newStore();
+    const old = new Date(Date.now() - 200 * 3_600_000).toISOString(); // 200h ago
+    writeFileSync(file, JSON.stringify({
+      processedJobs: { '999': { processedAt: old, status: 'FULL', assigned: {} } },
+      roundRobinCounters: {},
+    }));
+    await store.load();
+    const removed = store.pruneOldJobs(96);
+    expect(removed).toBe(1);
+    expect(store.isProcessed('999')).toBe(false);
+  });
+
+  it('recovers from corrupt state.json by starting fresh', async () => {
+    const { store, file } = newStore();
+    writeFileSync(file, '{ broken');
+    await expect(store.load()).resolves.toBeUndefined();
+    expect(store.isProcessed('anything')).toBe(false);
   });
 });

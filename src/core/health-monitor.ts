@@ -38,7 +38,14 @@ export class HealthMonitor {
       const raw = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as HealthState;
       this.state = { ...this.state, ...raw, today: { ...this.state.today, ...raw.today } };
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      if (err instanceof SyntaxError) {
+        const backup = `${this.filePath}.corrupt.${Date.now()}`;
+        await fs.rename(this.filePath, backup).catch(() => {});
+        return; // keep the fresh default state from the constructor
+      }
+      throw err;
     }
   }
 
@@ -77,7 +84,7 @@ export class HealthMonitor {
   }
 
   shouldAlertErrorRate(threshold: number): boolean {
-    return this.state.consecutiveErrors === threshold;
+    return this.state.consecutiveErrors > 0 && this.state.consecutiveErrors % threshold === 0;
   }
 
   isDailySummaryDue(now: Date, summaryTime: string): boolean {

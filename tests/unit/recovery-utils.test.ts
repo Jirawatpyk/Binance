@@ -11,6 +11,9 @@ describe('isBrowserDeadError', () => {
   it('detects "Browser has been closed"', () => {
     expect(isBrowserDeadError(new Error('Browser has been closed'))).toBe(true);
   });
+  it('detects a BrowserContext closed message', () => {
+    expect(isBrowserDeadError(new Error('BrowserContext has been closed'))).toBe(true);
+  });
   it('false for an ordinary error', () => {
     expect(isBrowserDeadError(new Error('TranslatorNotFoundError: x not in popup'))).toBe(false);
   });

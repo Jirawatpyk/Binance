@@ -88,20 +88,24 @@ describe('HealthMonitor', () => {
     expect(m2.isDailySummaryDue(new Date(2026, 4, 7, 10, 0), '09:00')).toBe(false);
   });
 
-  it('dailySummaryStats returns structured counts and uptime', () => {
+  it('dailySummaryStats returns counts, per-language, polls, uptime, last activity', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
-    monitor.recordAssignment(true);
+    monitor.recordTickStart(new Date(2026, 4, 7, 8, 0)); // 1 poll today
+    monitor.recordAssignment(true, 'lo-LA', new Date(2026, 4, 7, 8, 30));
+    monitor.recordAssignment(true, 'km-KH', new Date(2026, 4, 7, 8, 31));
     monitor.recordJobAssigned();
     monitor.recordAuthEpisode();
     const s = monitor.dailySummaryStats(new Date(2026, 4, 7, 9, 0));
-    expect(s).toEqual({
-      date: '2026-05-07',
-      assigned: 1,
-      jobsAssigned: 1,
-      failed: 0,
-      authEpisodes: 1,
-      uptimeHours: 1, // 08:00 → 09:00
-    });
+    expect(s.date).toBe('2026-05-07');
+    expect(s.assigned).toBe(2);
+    expect(s.byLang).toEqual({ 'lo-LA': 1, 'km-KH': 1 });
+    expect(s.jobsAssigned).toBe(1);
+    expect(s.authEpisodes).toBe(1);
+    expect(s.ticks).toBe(1);
+    expect(s.uptimeHours).toBe(1); // 08:00 → 09:00
+    expect(s.failed).toBe(0);
+    expect(s.consecutiveErrors).toBe(0);
+    expect(s.lastAssignmentAt).toBe(new Date(2026, 4, 7, 8, 31).toISOString());
   });
 
   it('defaults jobsAssigned to 0 when loading a pre-jobsAssigned health.json', async () => {

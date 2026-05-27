@@ -103,21 +103,63 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
   };
 }
 
+/** Format an ISO timestamp as "YYYY-MM-DD HH:mm UTC", or "—" when null/invalid. */
+function utcStamp(iso: string | null): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+}
+
 /**
- * The daily heartbeat as a card matching the assignment-summary style: a
- * `💓 Daily Summary` header (date as subtitle) and one decoratedText row per
- * metric — assignments, issues, and uptime — each with a leading icon. The
- * failure count turns red when non-zero so problems stand out at a glance.
+ * The daily heartbeat as a full, grouped card: a `📊 Daily Summary` header
+ * (date + uptime), an "Assignments" section (totals + per-language breakdown)
+ * and a "Health" section (uptime/polls, issues, last activity). Failure and
+ * error-streak counts turn red when non-zero so problems stand out at a glance.
  */
 export function buildDailySummaryCard(s: DailySummaryStats): unknown {
-  const failed =
-    s.failed > 0 ? `<font color="#d93025"><b>${s.failed}</b> failed</font>` : '<b>0</b> failed';
-  const widgets = [
+  const lo = s.byLang['lo-LA'] ?? 0;
+  const km = s.byLang['km-KH'] ?? 0;
+
+  const issues = [
+    s.failed > 0 ? `<font color="#d93025"><b>${s.failed}</b> failed</font>` : '<b>0</b> failed',
+    `<b>${s.authEpisodes}</b> auth`,
+    s.consecutiveErrors > 0
+      ? `<font color="#d93025"><b>${s.consecutiveErrors}</b> err streak</font>`
+      : null,
+  ]
+    .filter(Boolean)
+    .join('  ·  ');
+
+  const assignmentsWidgets = [
     {
       decoratedText: {
         startIcon: { knownIcon: 'MULTIPLE_PEOPLE' },
         topLabel: 'Assigned today',
-        text: `<b>${s.assigned}</b> language(s) across <b>${s.jobsAssigned}</b> job(s)`,
+        text:
+          s.assigned === 0
+            ? '<b>No assignments yet today</b>'
+            : `<b>${s.assigned}</b> language(s) across <b>${s.jobsAssigned}</b> job(s)`,
+        wrapText: true,
+      },
+    },
+    {
+      decoratedText: {
+        startIcon: { knownIcon: 'BOOKMARK' },
+        topLabel: 'By language',
+        text: `lo-LA <b>${lo}</b>   ·   km-KH <b>${km}</b>`,
+        wrapText: true,
+      },
+    },
+  ];
+
+  const healthWidgets = [
+    {
+      decoratedText: {
+        startIcon: { knownIcon: 'CLOCK' },
+        topLabel: 'Uptime · polls',
+        text: `<b>${s.uptimeHours}h</b>   ·   <b>${s.ticks}</b> polls`,
         wrapText: true,
       },
     },
@@ -125,25 +167,31 @@ export function buildDailySummaryCard(s: DailySummaryStats): unknown {
       decoratedText: {
         startIcon: { knownIcon: 'DESCRIPTION' },
         topLabel: 'Issues',
-        text: `${failed}  ·  <b>${s.authEpisodes}</b> auth episode(s)`,
+        text: issues,
         wrapText: true,
       },
     },
     {
       decoratedText: {
-        startIcon: { knownIcon: 'CLOCK' },
-        topLabel: 'Uptime',
-        text: `<b>${s.uptimeHours}h</b>`,
+        startIcon: { knownIcon: 'STAR' },
+        topLabel: 'Last assignment',
+        text: utcStamp(s.lastAssignmentAt),
+        bottomLabel: `Last successful poll: ${utcStamp(s.lastSuccessAt)}`,
+        wrapText: true,
       },
     },
   ];
+
   return {
     cardsV2: [
       {
         cardId: `summary-${Date.now()}`,
         card: {
-          header: { title: '💓 Daily Summary', subtitle: esc(s.date) },
-          sections: [{ widgets }],
+          header: { title: '📊 Daily Summary', subtitle: `${esc(s.date)}  ·  uptime ${s.uptimeHours}h` },
+          sections: [
+            { header: 'Assignments', widgets: assignmentsWidgets },
+            { header: 'Health', widgets: healthWidgets },
+          ],
         },
       },
     ],

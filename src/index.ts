@@ -231,7 +231,7 @@ async function main(): Promise<void> {
               } else {
                 // Real assignment only — dry-run must not affect health metrics,
                 // round-robin counters, or notifications.
-                health.recordAssignment(true);
+                health.recordAssignment(true, lang.code);
                 if (pick.useRoundRobin && pick.rrKey) {
                   state.incrementRR(pick.rrKey);
                 }
@@ -240,7 +240,7 @@ async function main(): Promise<void> {
             } catch (err) {
               if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery
               failed.push(lang.code);
-              health.recordAssignment(false);
+              health.recordAssignment(false, lang.code);
               logger.error('assignment failed', { jobId: job.id, language: lang.code, error: (err as Error).message });
               await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay).catch(() => null);
             }

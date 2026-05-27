@@ -7,6 +7,7 @@ function card(payload: unknown): {
   card: {
     header: { title: string; subtitle: string };
     sections: Array<{
+      header?: string;
       widgets: Array<{
         textParagraph?: { text: string };
         decoratedText?: { topLabel?: string; bottomLabel?: string; text: string };
@@ -18,10 +19,14 @@ function card(payload: unknown): {
   return (payload as { cardsV2: unknown[] }).cardsV2[0] as never;
 }
 
-/** Concatenate all renderable text from a summary card's widgets. */
+/** Concatenate all renderable text across every section's widgets. */
 function allText(c: ReturnType<typeof card>): string {
-  return c.card.sections[0].widgets
-    .map((w) => `${w.decoratedText?.topLabel ?? ''} ${w.decoratedText?.text ?? ''} ${w.textParagraph?.text ?? ''}`)
+  return c.card.sections
+    .flatMap((s) => s.widgets)
+    .map(
+      (w) =>
+        `${w.decoratedText?.topLabel ?? ''} ${w.decoratedText?.bottomLabel ?? ''} ${w.decoratedText?.text ?? ''} ${w.textParagraph?.text ?? ''}`
+    )
     .join('\n');
 }
 
@@ -137,26 +142,48 @@ describe('buildAssignmentSummaryCard', () => {
 });
 
 describe('buildDailySummaryCard', () => {
-  const stats = { date: '2026-05-27', assigned: 5, jobsAssigned: 3, failed: 0, authEpisodes: 1, uptimeHours: 12.3 };
+  const stats = {
+    date: '2026-05-27',
+    assigned: 5,
+    jobsAssigned: 3,
+    byLang: { 'lo-LA': 2, 'km-KH': 3 } as Record<'lo-LA' | 'km-KH', number>,
+    failed: 0,
+    authEpisodes: 1,
+    ticks: 240,
+    uptimeHours: 12.3,
+    lastAssignmentAt: '2026-05-27T11:42:00Z',
+    lastSuccessAt: '2026-05-27T13:09:00Z',
+    consecutiveErrors: 0,
+  };
 
-  it('has the heartbeat header with date subtitle and three metric rows', () => {
+  it('has the Daily Summary header with date + uptime subtitle and Assignments/Health sections', () => {
     const c = card(buildDailySummaryCard(stats));
-    expect(c.card.header.title).toBe('💓 Daily Summary');
-    expect(c.card.header.subtitle).toBe('2026-05-27');
-    expect(c.card.sections[0].widgets.filter((w) => w.decoratedText)).toHaveLength(3);
+    expect(c.card.header.title).toBe('📊 Daily Summary');
+    expect(c.card.header.subtitle).toBe('2026-05-27  ·  uptime 12.3h');
+    expect(c.card.sections.map((s) => s.header)).toEqual(['Assignments', 'Health']);
   });
 
-  it('renders counts and uptime', () => {
+  it('renders totals, per-language breakdown, polls, and last activity (UTC)', () => {
     const text = allText(card(buildDailySummaryCard(stats)));
     expect(text).toContain('<b>5</b> language(s) across <b>3</b> job(s)');
-    expect(text).toContain('<b>1</b> auth episode(s)');
+    expect(text).toContain('lo-LA <b>2</b>');
+    expect(text).toContain('km-KH <b>3</b>');
+    expect(text).toContain('<b>240</b> polls');
     expect(text).toContain('<b>12.3h</b>');
+    expect(text).toContain('2026-05-27 11:42 UTC'); // last assignment
+    expect(text).toContain('2026-05-27 13:09 UTC'); // last successful poll
   });
 
-  it('keeps failures black at zero and red when non-zero', () => {
+  it('shows "No assignments yet today" when idle', () => {
+    const text = allText(card(buildDailySummaryCard({ ...stats, assigned: 0, jobsAssigned: 0 })));
+    expect(text).toContain('No assignments yet today');
+  });
+
+  it('keeps failures black at zero and red when non-zero, and surfaces error streak', () => {
     expect(allText(card(buildDailySummaryCard(stats)))).toContain('<b>0</b> failed');
-    const withFailures = allText(card(buildDailySummaryCard({ ...stats, failed: 4 })));
-    expect(withFailures).toContain('#d93025');
-    expect(withFailures).toContain('<b>4</b> failed');
+    const bad = allText(card(buildDailySummaryCard({ ...stats, failed: 4, consecutiveErrors: 3 })));
+    expect(bad).toContain('#d93025');
+    expect(bad).toContain('<b>4</b> failed');
+    expect(bad).toContain('<b>3</b> err streak');
   });
 });

@@ -31,7 +31,19 @@ await send(
 
 await send(
   'daily-summary-card',
-  buildDailySummaryCard({ date: '2026-05-27', assigned: 7, jobsAssigned: 5, failed: 1, authEpisodes: 0, uptimeHours: 12.3 })
+  buildDailySummaryCard({
+    date: '2026-05-27',
+    assigned: 7,
+    jobsAssigned: 5,
+    byLang: { 'lo-LA': 4, 'km-KH': 3 },
+    failed: 1,
+    authEpisodes: 0,
+    ticks: 240,
+    uptimeHours: 12.3,
+    lastAssignmentAt: '2026-05-27T11:42:00Z',
+    lastSuccessAt: '2026-05-27T13:09:00Z',
+    consecutiveErrors: 0,
+  })
 );
 
 console.log('Done — check the test Google Chat space.');

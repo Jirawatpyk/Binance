@@ -78,9 +78,14 @@ export interface DailySummaryStats {
   date: string;
   assigned: number; // language-level assignments today
   jobsAssigned: number; // jobs that received at least one assignment today
+  byLang: Record<SupportedLanguage, number>; // assignments split per language today
   failed: number;
   authEpisodes: number;
+  ticks: number; // polling cycles run today
   uptimeHours: number;
+  lastAssignmentAt: string | null; // ISO; last successful assignment (any day)
+  lastSuccessAt: string | null; // ISO; last successful tick
+  consecutiveErrors: number; // current consecutive-error streak (0 = healthy)
 }
 
 export interface AssignmentResult {

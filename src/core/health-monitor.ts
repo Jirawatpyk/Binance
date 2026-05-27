@@ -1,7 +1,7 @@
 import { promises as fs } from 'fs';
 import path from 'path';
 import { localDateString, isNewDay, isDailySummaryDue } from './health-utils.js';
-import type { DailySummaryStats } from '../types/index.js';
+import type { DailySummaryStats, SupportedLanguage } from '../types/index.js';
 
 interface TodayCounters {
   date: string;
@@ -9,16 +9,24 @@ interface TodayCounters {
   jobsAssigned: number; // jobs that received at least one assignment
   failed: number;
   authEpisodes: number;
+  lo: number; // lo-LA language assignments
+  km: number; // km-KH language assignments
+  ticks: number; // polling cycles run today
 }
 
 interface HealthState {
   startedAt: string;
   lastTickAt: string | null;
   lastSuccessAt: string | null;
+  lastAssignmentAt: string | null;
   consecutiveErrors: number;
   consecutiveZeroScans: number;
   today: TodayCounters;
   lastDailySummaryDate: string | null;
+}
+
+function emptyToday(now: Date): TodayCounters {
+  return { date: localDateString(now), assigned: 0, jobsAssigned: 0, failed: 0, authEpisodes: 0, lo: 0, km: 0, ticks: 0 };
 }
 
 export class HealthMonitor {
@@ -29,9 +37,10 @@ export class HealthMonitor {
       startedAt: now.toISOString(),
       lastTickAt: null,
       lastSuccessAt: null,
+      lastAssignmentAt: null,
       consecutiveErrors: 0,
       consecutiveZeroScans: 0,
-      today: { date: localDateString(now), assigned: 0, jobsAssigned: 0, failed: 0, authEpisodes: 0 },
+      today: emptyToday(now),
       lastDailySummaryDate: null,
     };
   }
@@ -54,12 +63,13 @@ export class HealthMonitor {
 
   private rollover(now: Date): void {
     if (isNewDay(now, this.state.today.date)) {
-      this.state.today = { date: localDateString(now), assigned: 0, jobsAssigned: 0, failed: 0, authEpisodes: 0 };
+      this.state.today = emptyToday(now);
     }
   }
 
   recordTickStart(now: Date = new Date()): void {
     this.rollover(now);
+    this.state.today.ticks += 1;
     this.state.lastTickAt = now.toISOString();
   }
 
@@ -72,9 +82,15 @@ export class HealthMonitor {
     this.state.consecutiveErrors += 1;
   }
 
-  recordAssignment(ok: boolean): void {
-    if (ok) this.state.today.assigned += 1;
-    else this.state.today.failed += 1;
+  recordAssignment(ok: boolean, lang?: SupportedLanguage, now: Date = new Date()): void {
+    if (ok) {
+      this.state.today.assigned += 1;
+      if (lang === 'lo-LA') this.state.today.lo += 1;
+      else if (lang === 'km-KH') this.state.today.km += 1;
+      this.state.lastAssignmentAt = now.toISOString();
+    } else {
+      this.state.today.failed += 1;
+    }
   }
 
   /** Count one job that received at least one (real) language assignment. */
@@ -112,9 +128,14 @@ export class HealthMonitor {
       date: t.date,
       assigned: t.assigned,
       jobsAssigned: t.jobsAssigned,
+      byLang: { 'lo-LA': t.lo, 'km-KH': t.km },
       failed: t.failed,
       authEpisodes: t.authEpisodes,
+      ticks: t.ticks,
       uptimeHours,
+      lastAssignmentAt: this.state.lastAssignmentAt,
+      lastSuccessAt: this.state.lastSuccessAt,
+      consecutiveErrors: this.state.consecutiveErrors,
     };
   }
 

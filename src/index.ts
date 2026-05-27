@@ -80,6 +80,12 @@ async function main(): Promise<void> {
             if (pick.useRoundRobin && pick.rrKey && !settings.assignment.dryRun) {
               state.incrementRR(pick.rrKey);
             }
+            if (!settings.assignment.dryRun) {
+              await notifier.notify(
+                `Assigned job ${job.id} "${job.name}" — ${lang.code} → ${pick.translator} (${detail.wordCount} words)`,
+                'info'
+              );
+            }
           } catch (err) {
             failed.push(lang.code);
             logger.error('assignment failed', {

@@ -45,15 +45,31 @@ export class Assigner {
     }
 
     await translatorAssignBtn.click();
-    await modal.waitFor({ state: 'hidden', timeout: 10_000 });
-    const updatedTranslator = (await row.locator('td').nth(2).textContent() ?? '').trim();
-    if (!updatedTranslator || updatedTranslator === '-') {
-      throw new AssignmentFailedError('Row not updated after modal closed', {
+    // Verify success without re-reading the row (it moves out of the Waiting tab
+    // on success). An Ant Design success toast ("Assigned successfully") appears
+    // and the modal closes. A failure keeps the modal open with an error message.
+    const successToast = this.page
+      .locator('.ant-message-success, .ant-notification-notice-success')
+      .first();
+    const sawToast = await successToast
+      .waitFor({ state: 'visible', timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
+
+    await modal.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+    const modalStillOpen = await modal.isVisible().catch(() => false);
+
+    if (!sawToast && modalStillOpen) {
+      throw new AssignmentFailedError('No success confirmation; modal still open after assign', {
         language,
         translatorEmail,
         rowIndex,
       });
     }
-    this.logger.info('assignment submitted', { language, translatorEmail });
+    this.logger.info('assignment submitted', {
+      language,
+      translatorEmail,
+      confirmedBy: sawToast ? 'toast' : 'modal-closed',
+    });
   }
 }

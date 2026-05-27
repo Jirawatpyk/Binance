@@ -10,7 +10,8 @@ import { Assigner } from './assignment/assigner.js';
 import { Scheduler } from './core/scheduler.js';
 import { retry } from './core/retry.js';
 import { ProcessLock } from './core/lock.js';
-import { captureScreenshot } from './core/screenshot.js';
+import { captureScreenshot, cleanOldScreenshots } from './core/screenshot.js';
+import type { Page } from 'playwright';
 import { GoogleChatNotifier } from './notifications/google-chat.js';
 import type { SupportedLanguage } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
@@ -33,29 +34,45 @@ async function main(): Promise<void> {
 
   const notifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, logger);
 
+  if (!process.env.GOOGLE_CHAT_WEBHOOK_URL) {
+    logger.warn('GOOGLE_CHAT_WEBHOOK_URL not set — Google Chat notifications are disabled');
+  }
+  logger.info('bot starting', { node: process.version, dryRun: settings.assignment.dryRun });
+
   const lock = new ProcessLock(LOCK_PATH);
-  await lock.acquire();
-  logger.info('process lock acquired', { lockPath: LOCK_PATH });
-
   const state = new StateStore(settings.storage.statePath);
-  await state.load();
-
   const session = new AuthSession(settings, logger);
-  let page = await session.start();
+  const health = new HealthMonitor('./data/health.json');
+  let page: Page;
+  try {
+    await lock.acquire();
+    logger.info('process lock acquired', { lockPath: LOCK_PATH });
+    await state.load();
+    await health.load();
+    page = await session.start();
+  } catch (err) {
+    await notifier.notify(`Bot FAILED to start: ${(err as Error).message} — check host logs`, 'error');
+    throw err;
+  }
+
+  // One-time maintenance at startup: bound state.json and screenshot disk usage.
+  const prunedAtStart = state.pruneOldJobs(settings.scan.processedJobRetainHours);
+  if (prunedAtStart > 0) {
+    logger.info('pruned old processed jobs', { removed: prunedAtStart });
+    await state.save();
+  }
+  await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
 
   const engine = new AssignmentEngine(translators, state);
   let scanner = new JobScanner(page, logger, settings.scan);
   let processor = new JobProcessor(page, logger);
   let assigner = new Assigner(page, logger, settings.assignment.dryRun);
 
-  const rebuildPipeline = (p: typeof page): void => {
+  const rebuildPipeline = (p: Page): void => {
     scanner = new JobScanner(p, logger, settings.scan);
     processor = new JobProcessor(p, logger);
     assigner = new Assigner(p, logger, settings.assignment.dryRun);
   };
-
-  const health = new HealthMonitor('./data/health.json');
-  await health.load();
 
   const reauth = new ReAuthManager({
     ensureLoggedIn: () => session.ensureLoggedIn(),
@@ -67,8 +84,19 @@ async function main(): Promise<void> {
   });
 
   const tick = async (): Promise<void> => {
+    const tickStart = Date.now();
     logger.info('tick started');
     health.recordTickStart();
+
+    // Daily summary is a heartbeat — send it regardless of auth/work state.
+    if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
+      await notifier.notify(health.buildDailySummary(), 'info');
+      health.markDailySummarySent();
+      // Daily maintenance alongside the heartbeat.
+      const pruned = state.pruneOldJobs(settings.scan.processedJobRetainHours);
+      if (pruned > 0) { logger.info('pruned old processed jobs', { removed: pruned }); }
+      await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+    }
 
     if (!(await reauth.ensureReady())) {
       await health.save();
@@ -79,6 +107,9 @@ async function main(): Promise<void> {
       const candidates = await scanner.scan();
       for (const job of candidates) {
         if (state.isProcessed(job.id)) continue;
+        if (settings.scan.detailPageDelayMs > 0) {
+          await new Promise((r) => setTimeout(r, settings.scan.detailPageDelayMs));
+        }
         try {
           logger.info('processing job', { jobId: job.id, name: job.name });
           const detail = await processor.open(job.detailUrl, job.id);
@@ -146,13 +177,13 @@ async function main(): Promise<void> {
       }
       health.recordTickSuccess();
     } catch (err) {
-      health.recordTickError();
       if (isBrowserDeadError(err)) {
         logger.error('browser died; recovering', { error: (err as Error).message });
         await notifier.notify('Browser crashed — recovering', 'warn');
         page = await session.recover();
         rebuildPipeline(page);
       } else {
+        health.recordTickError();
         logger.error('tick failed', { error: (err as Error).message });
         if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
           await notifier.notify(
@@ -163,12 +194,8 @@ async function main(): Promise<void> {
       }
     }
 
-    if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
-      await notifier.notify(health.buildDailySummary(), 'info');
-      health.markDailySummarySent();
-    }
     await health.save();
-    logger.info('tick complete');
+    logger.info('tick complete', { durationMs: Date.now() - tickStart });
   };
 
   const guardedTick = (): Promise<void> =>

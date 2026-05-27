@@ -72,8 +72,18 @@ export class JobScanner {
     // Set the status filter to "Available to Claim" (once — applies to all languages)
     await this.setStatusFilter('Available to Claim');
 
-    // Set the Created date range filter (board-level filter — narrows to recent jobs)
-    await this.setDateFilter(createdFrom, createdTo);
+    // Set the Created date range filter (board-level pre-filter — narrows to
+    // recent jobs). The board's Created filter is DATE-ONLY and applies in the
+    // board's LOCAL timezone, while we compute the window in UTC. A job created
+    // late in the UTC day (e.g. 17:19 UTC == next day in UTC+7) is filed under
+    // the NEXT local date, so a UTC "to = today" filter silently drops it.
+    // Pad the board filter by a day on each side; the exact UTC cutoff is still
+    // enforced client-side by isCreatedAfterCutoff in collectAllPages.
+    const DAY_MS = 24 * 3600_000;
+    await this.setDateFilter(
+      new Date(createdFrom.getTime() - DAY_MS),
+      new Date(createdTo.getTime() + DAY_MS)
+    );
 
     // Iterate each supported language and collect all pages
     const jobMap = new Map<string, Job>();

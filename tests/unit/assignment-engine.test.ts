@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { AssignmentEngine } from '../../src/assignment/engine.js';
+import { BotError } from '../../src/core/errors.js';
 import type { TranslatorsConfig } from '../../src/types/index.js';
 
 const config: TranslatorsConfig = {
@@ -67,7 +68,7 @@ describe('AssignmentEngine.pick', () => {
 
   it('throws if language has no config', () => {
     const engine = new AssignmentEngine({}, { getRRIndex: () => 0 });
-    expect(() => engine.pick('lo-LA', 100)).toThrow();
+    expect(() => engine.pick('lo-LA', 100)).toThrow(BotError);
   });
 
   it('picks the middle tier just above the lower boundary (501)', () => {

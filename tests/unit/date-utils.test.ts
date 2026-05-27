@@ -15,6 +15,12 @@ describe('parseCreatedUtc', () => {
   it('returns null for garbage', () => {
     expect(parseCreatedUtc('not a date')).toBeNull();
   });
+  it('respects an explicit UTC Z suffix', () => {
+    expect(parseCreatedUtc('2026-05-27 10:52Z')).toBe(Date.UTC(2026, 4, 27, 10, 52, 0));
+  });
+  it('respects an explicit +07:00 offset', () => {
+    expect(parseCreatedUtc('2026-05-27 10:52+07:00')).toBe(Date.UTC(2026, 4, 27, 3, 52, 0));
+  });
 });
 
 describe('formatBoardDate', () => {

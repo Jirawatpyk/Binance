@@ -110,7 +110,11 @@ async function main(): Promise<void> {
     }
 
     if (!(await reauth.ensureReady())) {
-      await health.save();
+      try {
+        await health.save();
+      } catch (err) {
+        logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
+      }
       return; // paused awaiting manual cookie refresh
     }
 
@@ -119,6 +123,7 @@ async function main(): Promise<void> {
     if (session.getPage() !== page) {
       page = session.getPage();
       rebuildPipeline(page);
+      lastBrowserStart = Date.now();
       logger.info('pipeline rebuilt after context change (cookie refresh)');
     }
 
@@ -220,7 +225,7 @@ async function main(): Promise<void> {
               failed.push(lang.code);
               health.recordAssignment(false);
               logger.error('assignment failed', { jobId: job.id, language: lang.code, error: (err as Error).message });
-              await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay);
+              await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay).catch(() => null);
             }
           }
           if (!settings.assignment.dryRun && Object.keys(assigned).length > 0) {
@@ -241,7 +246,7 @@ async function main(): Promise<void> {
         } catch (err) {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
           logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
-          await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`, settings.logging.screenshotMaxPerDay);
+          await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
           await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
@@ -252,6 +257,7 @@ async function main(): Promise<void> {
         await notifier.notify('Browser crashed — recovering', 'warn');
         page = await session.recover();
         rebuildPipeline(page);
+        lastBrowserStart = Date.now();
       } else {
         health.recordTickError();
         logger.error('tick failed', { error: (err as Error).message });
@@ -264,7 +270,11 @@ async function main(): Promise<void> {
       }
     }
 
-    await health.save();
+    try {
+      await health.save();
+    } catch (err) {
+      logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
+    }
     logger.info('tick complete', { durationMs: Date.now() - tickStart });
   };
 

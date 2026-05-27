@@ -14,6 +14,12 @@ describe('isBrowserDeadError', () => {
   it('detects a BrowserContext closed message', () => {
     expect(isBrowserDeadError(new Error('BrowserContext has been closed'))).toBe(true);
   });
+  it('detects "Page was destroyed"', () => {
+    expect(isBrowserDeadError(new Error('Page was destroyed'))).toBe(true);
+  });
+  it('detects "Connection closed"', () => {
+    expect(isBrowserDeadError(new Error('Connection closed while reading'))).toBe(true);
+  });
   it('false for an ordinary error', () => {
     expect(isBrowserDeadError(new Error('TranslatorNotFoundError: x not in popup'))).toBe(false);
   });

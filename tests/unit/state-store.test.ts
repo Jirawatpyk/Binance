@@ -104,4 +104,27 @@ describe('StateStore', () => {
     expect(store.getProcessStatus('p2')).toBe('ABANDONED');
     expect(store.isProcessed('p2')).toBe(false);
   });
+
+  it('markPartial accumulates assigned across retries', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markPartial('acc1', { 'lo-LA': 'a@eqho.com' }, ['km-KH']);
+    store.markPartial('acc1', { 'km-KH': 'b@eqho.com' }, []);
+    const e = store.getProcessedEntry('acc1');
+    expect(e?.assigned).toEqual({ 'lo-LA': 'a@eqho.com', 'km-KH': 'b@eqho.com' });
+    expect(e?.retryCount).toBe(2);
+  });
+
+  it('markAbandoned refreshes processedAt and keeps prior assigned', async () => {
+    const { store } = newStore();
+    await store.load();
+    store.markPartial('ab1', { 'lo-LA': 'a@eqho.com' }, ['km-KH']);
+    const before = store.getProcessedEntry('ab1')?.processedAt;
+    await new Promise((r) => setTimeout(r, 5));
+    store.markAbandoned('ab1');
+    const e = store.getProcessedEntry('ab1');
+    expect(e?.status).toBe('ABANDONED');
+    expect(e?.assigned).toEqual({ 'lo-LA': 'a@eqho.com' });
+    expect(e?.processedAt).not.toBe(before);
+  });
 });

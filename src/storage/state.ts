@@ -69,7 +69,7 @@ export class StateStore {
     this.state.processedJobs[jobId] = {
       processedAt: new Date().toISOString(),
       status: 'PARTIAL',
-      assigned,
+      assigned: { ...prev?.assigned, ...assigned },
       failed,
       retryCount: (prev?.retryCount ?? 0) + 1,
     };
@@ -79,7 +79,7 @@ export class StateStore {
   markAbandoned(jobId: string): void {
     const prev = this.state.processedJobs[jobId];
     if (!prev) return;
-    this.state.processedJobs[jobId] = { ...prev, status: 'ABANDONED' };
+    this.state.processedJobs[jobId] = { ...prev, status: 'ABANDONED', processedAt: new Date().toISOString() };
     this.dirty = true;
   }
 

@@ -43,7 +43,7 @@ export class StateStore {
     return this.state.processedJobs[jobId]?.status === 'FULL';
   }
 
-  getProcessStatus(jobId: string): 'FULL' | 'PARTIAL' | undefined {
+  getProcessStatus(jobId: string): 'FULL' | 'PARTIAL' | 'ABANDONED' | undefined {
     return this.state.processedJobs[jobId]?.status;
   }
 

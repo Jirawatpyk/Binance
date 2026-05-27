@@ -43,22 +43,25 @@ export interface Settings {
   scan: { lookbackHours: number; maxCandidatesPerTick: number; detailPageDelayMs: number; processedJobRetainHours: number };
   browser: { headless: boolean; viewport: { width: number; height: number }; navigationTimeoutMs: number };
   storage: { statePath: string; logsDir: string; cookiesPath: string };
-  assignment: { dryRun: boolean; maxRetries: number; retryDelayMs: number };
-  logging: { level: 'debug' | 'info' | 'warn' | 'error'; rotateDays: number; screenshotRetainDays: number };
+  assignment: { dryRun: boolean; maxRetries: number; retryDelayMs: number; maxPartialRetries: number };
+  logging: { level: 'debug' | 'info' | 'warn' | 'error'; rotateDays: number; screenshotRetainDays: number; screenshotMaxPerDay: number };
   reliability: {
     watchdog: { tickTimeoutMs: number };
     reauth: { alertOnExpiry: boolean };
     monitoring: { dailySummaryTime: string; consecutiveErrorAlert: number };
+    browserRecycleHours: number;
+    consecutiveZeroScanAlert: number;
   };
 }
 
-export type ProcessStatus = 'FULL' | 'PARTIAL';
+export type ProcessStatus = 'FULL' | 'PARTIAL' | 'ABANDONED';
 
 export interface ProcessedJobEntry {
   processedAt: string;
   status: ProcessStatus;
   assigned: Partial<Record<SupportedLanguage, string>>;
   failed?: SupportedLanguage[];
+  retryCount?: number;
 }
 
 export interface State {

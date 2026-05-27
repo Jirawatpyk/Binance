@@ -29,11 +29,13 @@ const settingsSchema = z.object({
     dryRun: z.boolean(),
     maxRetries: z.number().int().nonnegative(),
     retryDelayMs: z.number().positive(),
+    maxPartialRetries: z.number().int().positive(),
   }),
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),
     rotateDays: z.number().positive(),
     screenshotRetainDays: z.number().int().positive(),
+    screenshotMaxPerDay: z.number().int().positive(),
   }),
   reliability: z.object({
     watchdog: z.object({ tickTimeoutMs: z.number().int().positive() }),
@@ -42,15 +44,23 @@ const settingsSchema = z.object({
       dailySummaryTime: z.string().regex(/^\d{2}:\d{2}$/, 'must be HH:mm'),
       consecutiveErrorAlert: z.number().int().positive(),
     }),
+    browserRecycleHours: z.number().positive(),
+    consecutiveZeroScanAlert: z.number().int().positive(),
   }),
-});
+}).refine(
+  (s) => s.scan.processedJobRetainHours >= s.scan.lookbackHours,
+  { message: 'scan.processedJobRetainHours must be >= scan.lookbackHours' }
+);
 
 const ruleSchema = z.object({
   maxWords: z.number().positive().nullable(),
   translators: z.array(z.string().email()).min(1),
 });
 
-const langConfigSchema = z.object({ rules: z.array(ruleSchema).min(1) });
+const langConfigSchema = z.object({ rules: z.array(ruleSchema).min(1) }).refine(
+  (c) => c.rules[c.rules.length - 1].maxWords === null,
+  { message: 'the last rule for a language must have maxWords: null (catch-all)' }
+);
 
 const translatorsSchema = z.object({
   'lo-LA': langConfigSchema.optional(),

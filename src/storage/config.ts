@@ -9,6 +9,10 @@ const settingsSchema = z.object({
     intervalMinutes: z.number().positive(),
     jitterSeconds: z.number().min(0),
   }),
+  scan: z.object({
+    lookbackHours: z.number().positive(),
+    maxCandidatesPerTick: z.number().int().positive(),
+  }),
   browser: z.object({
     headless: z.boolean(),
     viewport: z.object({ width: z.number().positive(), height: z.number().positive() }),

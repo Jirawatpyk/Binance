@@ -15,6 +15,7 @@ describe('loadSettings', () => {
   it('parses valid settings yaml', () => {
     const p = makeTmp('s.yml', `
 polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 50 }
 browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
 storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000 }
@@ -22,12 +23,15 @@ logging: { level: info, rotateDays: 14 }
 `);
     const s = loadSettings(p);
     expect(s.polling.intervalMinutes).toBe(5);
+    expect(s.scan.lookbackHours).toBe(48);
+    expect(s.scan.maxCandidatesPerTick).toBe(50);
     expect(s.logging.level).toBe('info');
   });
 
   it('throws on invalid level', () => {
     const p = makeTmp('s.yml', `
 polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 50 }
 browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
 storage: { statePath: x, logsDir: y, cookiesPath: z }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000 }

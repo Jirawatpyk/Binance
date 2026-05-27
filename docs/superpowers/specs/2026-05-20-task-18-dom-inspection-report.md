@@ -288,3 +288,59 @@ Note: The lo-LA board count (334) and the scanned count (316) differ because:
 
 ### Safety
 No Assign button was clicked. No job state was mutated. All interactions were read-only (navigate, filter, Search, read table, paginate).
+
+---
+
+## Date filter + scope (lookbackHours)
+
+Verified live on 2026-05-27 via `scripts/inspect-dates.ts` (now deleted after findings documented).
+
+### Date picker structure
+
+The Job Board Filters panel contains **two `.ant-picker-range` RangePicker elements**:
+
+| Index | Placeholders | Purpose |
+|-------|-------------|---------|
+| nth(0) | "Due Date From" / "Due Date To" | Filter by job due date |
+| nth(1) | "Created From" / "Created To" | Filter by job creation date ← **use this** |
+
+### Interaction method
+
+- The inputs inside `.ant-picker-range nth(1)` are **not readonly** — they accept direct keyboard input.
+- Clicking the "Created From" input (`.ant-picker-range nth(1) input nth(0)`) opens a calendar popup (`.ant-picker-dropdown`).
+- **Date string format accepted: `"YYYY-MM-DD HH:mm:ss"`** (e.g. `"2026-05-25 00:00:00"`)
+- Sequence: click input → calendar opens → type date string → press Enter → repeat for "To" input → press Escape to close calendar.
+- The board correctly applies the filter when Search is subsequently clicked.
+
+### Implementation in `src/scraper/job-scanner.ts`
+
+- `setDateFilter(from: Date, to: Date)` helper sets `.ant-picker-range nth(1)` using the above sequence.
+- Called in `scan()` after `setStatusFilter()` and before iterating languages (date filter persists across language changes).
+- `formatDate()` formats a Date as `"YYYY-MM-DD HH:mm:ss"` (local time — board displays UTC but accepts local format; the cutoff window is intentionally generous).
+- A **second client-side layer** applies in `isCreatedAfterCutoff()`: each parsed row's `cells[4]` (Created column, format `"YYYY-MM-DD HH:mm"`) is compared against the cutoff. Rows that cannot be parsed are conservatively included.
+
+### Live test results (2026-05-27)
+
+| Metric | Value |
+|--------|-------|
+| lookbackHours | 48 |
+| maxCandidatesPerTick | 50 |
+| lo-LA jobs found (48h window) | 0 (no recent lo-LA "Available to Claim" jobs) |
+| km-KH jobs found (48h window) | 19 |
+| **Total candidates returned** | **19** |
+| Unfiltered baseline (pre-task) | 316 |
+| Reduction | ~94% |
+
+The 19 returned jobs were all created on 2026-05-25 or 2026-05-27, confirming the date filter is working correctly. The cap of 50 was not triggered (19 < 50).
+
+### Screenshots captured
+
+- `logs/screenshots/task-18c/00-initial.png` — Job board initial state
+- `logs/screenshots/task-18c/01-date-picker-open.png` — Created date range picker opened
+- `logs/screenshots/task-18c/02-typed-from-date.png` — "Created From" value typed
+- `logs/screenshots/task-18c/03-typed-to-date.png` — "Created To" value typed
+- `logs/screenshots/task-18c/04-filters-set.png` — All filters set before Search
+- `logs/screenshots/task-18c/dates-filter.png` — Final state: Total: 16 (lo-LA + status filter for 2-day window)
+
+### Safety
+No Assign button was clicked. No job state was mutated. All interactions were read-only.

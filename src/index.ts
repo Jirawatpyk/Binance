@@ -40,7 +40,7 @@ async function main(): Promise<void> {
   const page = await session.start();
 
   const engine = new AssignmentEngine(translators, state);
-  const scanner = new JobScanner(page, logger);
+  const scanner = new JobScanner(page, logger, settings.scan);
   const processor = new JobProcessor(page, logger);
   const assigner = new Assigner(page, logger, settings.assignment.dryRun);
 

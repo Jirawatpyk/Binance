@@ -2,6 +2,12 @@ polling:
   intervalMinutes: 5
   jitterSeconds: 30
 
+scan:
+  # Only process jobs created within this many hours (avoids huge backlog).
+  lookbackHours: 48
+  # Safety cap: never process more than this many candidate jobs per tick.
+  maxCandidatesPerTick: 50
+
 browser:
   headless: true
   viewport: { width: 1920, height: 1080 }

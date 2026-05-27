@@ -35,4 +35,12 @@ describe('isDailySummaryDue', () => {
   it('summaryTime 00:00 is due at midnight', () => {
     expect(isDailySummaryDue(new Date(2026, 4, 7, 0, 0), '00:00', null)).toBe(true);
   });
+  it('not due before the window when yesterday was already sent', () => {
+    // sent yesterday, now early today before the window — just wait for it
+    expect(isDailySummaryDue(new Date(2026, 4, 8, 8, 0), '09:00', '2026-05-07')).toBe(false);
+  });
+  it('catches up before the window if a full prior day was missed', () => {
+    // last sent two days ago (bot was down across yesterday's window) — fire now
+    expect(isDailySummaryDue(new Date(2026, 4, 9, 8, 0), '09:00', '2026-05-07')).toBe(true);
+  });
 });

@@ -143,12 +143,12 @@ describe('HealthMonitor', () => {
     expect(m.snapshot().today.jobsAssigned).toBe(1);
   });
 
-  it('recovers from a corrupt health.json by starting fresh', async () => {
+  it('recovers from a corrupt health.json by starting fresh and signals the recovery', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
     const file = path.join(dir, 'health.json');
     writeFileSync(file, '{ this is not valid json');
     const m = new HealthMonitor(file, new Date(2026, 4, 7, 8, 0));
-    await expect(m.load()).resolves.toBeUndefined();
+    await expect(m.load()).resolves.toBe(true);
     expect(m.snapshot().today.assigned).toBe(0); // fresh
   });
 

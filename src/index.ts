@@ -81,15 +81,34 @@ async function main(): Promise<void> {
   const session = new AuthSession(settings, logger);
   const health = new HealthMonitor('./data/health.json');
   let page: Page;
+  let stateRecovered = false;
+  let healthRecovered = false;
   try {
     await lock.acquire();
     logger.info('process lock acquired', { lockPath: LOCK_PATH });
-    await state.load();
-    await health.load();
+    stateRecovered = await state.load();
+    healthRecovered = await health.load();
     page = await session.start();
   } catch (err) {
     await notifier.notify(`Bot FAILED to start: ${(err as Error).message} — check host logs`, 'error');
     throw err;
+  }
+
+  // A corrupt state.json/health.json was renamed to .corrupt.* and reset to
+  // empty during load — silent data loss that can make the bot re-assign jobs
+  // it already handled (state.json holds the processed ledger + RR counters).
+  // Surface it loudly rather than let recovery hide it.
+  if (stateRecovered || healthRecovered) {
+    const files = [stateRecovered && 'state.json', healthRecovered && 'health.json']
+      .filter(Boolean)
+      .join(' + ');
+    logger.error('recovered from corrupt persistence file(s) — reset to empty', { files });
+    await notifier
+      .notify(
+        `Recovered from corrupt ${files} (reset to empty; a .corrupt.* backup was kept). Round-robin counters / processed-job history were lost — the bot may re-assign jobs it already handled this cycle.`,
+        'error'
+      )
+      .catch(() => {});
   }
 
   let lastBrowserStart = Date.now();
@@ -106,6 +125,12 @@ async function main(): Promise<void> {
   // bug. Swallow transient failures; alert once when they pile up past this.
   const SESSION_SAVE_FAILURE_ALERT_THRESHOLD = 3;
   let consecutiveSaveFailures = 0;
+  // state.json holds the round-robin counters + processed/abandoned ledger. A
+  // sustained write failure silently corrupts correctness (jobs re-assigned,
+  // counters frozen on one translator), so escalate a streak like the session
+  // save above rather than warn-and-forget every tick.
+  const STATE_SAVE_FAILURE_ALERT_THRESHOLD = 3;
+  let consecutiveStateSaveFailures = 0;
 
   // One-time maintenance at startup: bound state.json and screenshot disk usage.
   const prunedAtStart = state.pruneOldJobs(settings.scan.processedJobRetainHours);
@@ -467,7 +492,26 @@ async function main(): Promise<void> {
       // Persist this tick's state mutations in one write — in finally so a
       // browser-dead throw (recovered in the catch above) still saves processed/
       // abandoned status and the round-robin counters. No-op if nothing changed.
-      await state.save().catch((e) => logger.warn('state.save failed (non-fatal)', { error: (e as Error).message }));
+      // A single failure is swallowed; a sustained one is alerted at error level
+      // because it silently corrupts correctness (duplicate assigns, frozen RR).
+      try {
+        await state.save();
+        consecutiveStateSaveFailures = 0;
+      } catch (e) {
+        consecutiveStateSaveFailures += 1;
+        logger.error('state.save failed', {
+          error: (e as Error).message,
+          consecutiveStateSaveFailures,
+        });
+        if (consecutiveStateSaveFailures === STATE_SAVE_FAILURE_ALERT_THRESHOLD) {
+          await notifier
+            .notify(
+              `state.json failed to save ${consecutiveStateSaveFailures}× in a row — round-robin counters and processed-job history are not persisting. The bot may re-assign jobs and skew translator load until this is fixed (check disk space / file locks).`,
+              'error'
+            )
+            .catch(() => {});
+        }
+      }
     }
 
     // Anti-spam: one summary card per cycle for all jobs assigned this tick —

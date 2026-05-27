@@ -47,17 +47,21 @@ export class HealthMonitor {
     };
   }
 
-  async load(): Promise<void> {
+  /** Returns true if the on-disk file was corrupt and metrics were reset to a
+   *  fresh default — the caller should surface it (the daily summary will
+   *  under-report until counters rebuild). */
+  async load(): Promise<boolean> {
     try {
       const raw = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as HealthState;
       this.state = { ...this.state, ...raw, today: { ...this.state.today, ...raw.today } };
+      return false;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
-      if (code === 'ENOENT') return;
+      if (code === 'ENOENT') return false;
       if (err instanceof SyntaxError) {
         const backup = `${this.filePath}.corrupt.${Date.now()}`;
         await fs.rename(this.filePath, backup).catch(() => {});
-        return; // keep the fresh default state from the constructor
+        return true; // keep the fresh default state from the constructor
       }
       throw err;
     }

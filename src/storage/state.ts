@@ -8,23 +8,27 @@ export class StateStore {
 
   constructor(private filePath: string) {}
 
-  async load(): Promise<void> {
+  /** Returns true if the on-disk file was corrupt and the store was reset to
+   *  empty (losing round-robin counters + processed history) — the caller should
+   *  alert, since it can cause re-assignment of already-handled jobs. */
+  async load(): Promise<boolean> {
     try {
       const content = await fs.readFile(this.filePath, 'utf-8');
       this.state = JSON.parse(content);
       if (!this.state.processedJobs) this.state.processedJobs = {};
       if (!this.state.roundRobinCounters) this.state.roundRobinCounters = {};
+      return false;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
       if (code === 'ENOENT') {
         this.state = { processedJobs: {}, roundRobinCounters: {} };
-        return;
+        return false;
       }
       if (err instanceof SyntaxError) {
         const backup = `${this.filePath}.corrupt.${Date.now()}`;
         await fs.rename(this.filePath, backup).catch(() => {});
         this.state = { processedJobs: {}, roundRobinCounters: {} };
-        return;
+        return true;
       }
       throw err;
     }
@@ -123,6 +127,11 @@ export class StateStore {
     const cutoff = Date.now() - retainHours * 3_600_000;
     let removed = 0;
     for (const [id, entry] of Object.entries(this.state.processedJobs)) {
+      // Never age-prune ABANDONED records: we gave up on these, but the job may
+      // still be listed on the board, and dropping the record would let it be
+      // re-scanned, re-attempted from scratch, and re-alerted. They're few, so
+      // keeping them is cheap and preserves the "give up forever" guarantee.
+      if (entry.status === 'ABANDONED') continue;
       if (new Date(entry.processedAt).getTime() < cutoff) {
         delete this.state.processedJobs[id];
         removed += 1;

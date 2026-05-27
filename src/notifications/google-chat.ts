@@ -16,9 +16,15 @@ function emojiFor(severity: Severity): string {
   return severity === 'error' ? '🚨' : severity === 'warn' ? '⚠️' : 'ℹ️';
 }
 
-/** Escape the few characters that are special in Google Chat's HTML-subset text. */
+/** Escape the characters that are special in Google Chat's HTML-subset text.
+ *  Quotes are escaped too so a value stays safe if ever placed in an attribute. */
 function esc(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 /** "user@eqho.com" → "user" — the short translator handle shown beside the email. */
@@ -46,9 +52,12 @@ function fmtUtc(d: Date): string {
   return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
 }
 
-/** Format a due date as "Due YYYY-MM-DD HH:mm UTC", or null when unknown/invalid. */
-function formatDueUtc(d?: Date | null): string | null {
-  return !d || Number.isNaN(d.getTime()) ? null : `Due ${fmtUtc(d)}`;
+/** Format a due date as "Due YYYY-MM-DD HH:mm UTC" (prefixed "OVERDUE — " when
+ *  the deadline has already passed), or null when unknown/invalid. */
+function formatDueUtc(d?: Date | null, now: Date = new Date()): string | null {
+  if (!d || Number.isNaN(d.getTime())) return null;
+  const overdue = d.getTime() < now.getTime();
+  return `${overdue ? 'OVERDUE — ' : ''}Due ${fmtUtc(d)}`;
 }
 
 /** A simple one-paragraph card for lifecycle/alert messages. */
@@ -210,7 +219,15 @@ export function buildDailySummaryCard(s: DailySummaryStats): unknown {
   };
 }
 
+// Escalate to an error-level log once delivery has failed this many times in a
+// row. The chat channel itself may be the thing that's down, so the error log
+// (a separate sink) is the signal that "alerting is broken" — otherwise every
+// alert, including critical ones, would fail silently behind a warn.
+const NOTIFY_FAILURE_ALERT_THRESHOLD = 3;
+
 export class GoogleChatNotifier {
+  private consecutiveFailures = 0;
+
   constructor(
     private webhookUrl: string | undefined,
     private logger: winston.Logger
@@ -241,11 +258,25 @@ export class GoogleChatNotifier {
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(5_000),
       });
-      if (!res.ok) {
-        this.logger.warn('Google Chat notification non-2xx', { status: res.status, severity });
+      if (res.ok) {
+        this.consecutiveFailures = 0;
+        return;
       }
+      this.recordFailure(severity, `non-2xx ${res.status}`);
     } catch (err) {
-      this.logger.warn('Google Chat notification error', { error: (err as Error).message, severity });
+      this.recordFailure(severity, (err as Error).message);
+    }
+  }
+
+  /** Track delivery failures and escalate a sustained outage to error level —
+   *  a broken webhook otherwise hides every alert behind a warn line. */
+  private recordFailure(severity: Severity, reason: string): void {
+    this.consecutiveFailures += 1;
+    const meta = { reason, severity, consecutiveFailures: this.consecutiveFailures };
+    if (this.consecutiveFailures >= NOTIFY_FAILURE_ALERT_THRESHOLD) {
+      this.logger.error('Google Chat delivery failing repeatedly — alerts may not be reaching anyone', meta);
+    } else {
+      this.logger.warn('Google Chat notification failed', meta);
     }
   }
 }

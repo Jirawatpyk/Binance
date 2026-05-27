@@ -80,11 +80,29 @@ describe('StateStore', () => {
     expect(store.isProcessed('999')).toBe(false);
   });
 
-  it('recovers from corrupt state.json by starting fresh', async () => {
+  it('does NOT prune an ABANDONED job even when older than retainHours', async () => {
+    const { store, file } = newStore();
+    const old = new Date(Date.now() - 200 * 3_600_000).toISOString(); // 200h ago
+    writeFileSync(file, JSON.stringify({
+      processedJobs: { '777': { processedAt: old, status: 'ABANDONED', assigned: {} } },
+      roundRobinCounters: {},
+    }));
+    await store.load();
+    const removed = store.pruneOldJobs(96);
+    expect(removed).toBe(0);
+    expect(store.getProcessStatus('777')).toBe('ABANDONED');
+  });
+
+  it('recovers from corrupt state.json by starting fresh and signals the recovery', async () => {
     const { store, file } = newStore();
     writeFileSync(file, '{ broken');
-    await expect(store.load()).resolves.toBeUndefined();
+    await expect(store.load()).resolves.toBe(true);
     expect(store.isProcessed('anything')).toBe(false);
+  });
+
+  it('load() returns false on a clean (non-corrupt) file', async () => {
+    const { store } = newStore();
+    await expect(store.load()).resolves.toBe(false); // missing file (ENOENT)
   });
 
   it('increments retryCount across repeated markPartial', async () => {

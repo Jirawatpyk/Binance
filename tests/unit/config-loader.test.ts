@@ -20,12 +20,15 @@ browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTi
 storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000 }
 logging: { level: info, rotateDays: 14 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 } }
 `);
     const s = loadSettings(p);
     expect(s.polling.intervalMinutes).toBe(5);
     expect(s.scan.lookbackHours).toBe(48);
     expect(s.scan.maxCandidatesPerTick).toBe(50);
     expect(s.logging.level).toBe('info');
+    expect(s.reliability.watchdog.tickTimeoutMs).toBe(600000);
+    expect(s.reliability.monitoring.dailySummaryTime).toBe('09:00');
   });
 
   it('throws on invalid level', () => {
@@ -36,6 +39,7 @@ browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTi
 storage: { statePath: x, logsDir: y, cookiesPath: z }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000 }
 logging: { level: WRONG, rotateDays: 14 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 } }
 `);
     expect(() => loadSettings(p)).toThrow();
   });

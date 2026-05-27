@@ -45,6 +45,11 @@ export interface Settings {
   storage: { statePath: string; logsDir: string; cookiesPath: string };
   assignment: { dryRun: boolean; maxRetries: number; retryDelayMs: number };
   logging: { level: 'debug' | 'info' | 'warn' | 'error'; rotateDays: number };
+  reliability: {
+    watchdog: { tickTimeoutMs: number };
+    reauth: { alertOnExpiry: boolean };
+    monitoring: { dailySummaryTime: string; consecutiveErrorAlert: number };
+  };
 }
 
 export type ProcessStatus = 'FULL' | 'PARTIAL';

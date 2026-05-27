@@ -28,3 +28,12 @@ assignment:
 logging:
   level: info
   rotateDays: 14
+
+reliability:
+  watchdog:
+    tickTimeoutMs: 600000        # 10 min — above max real tick (~7 min at 50 jobs); longer = hang
+  reauth:
+    alertOnExpiry: true
+  monitoring:
+    dailySummaryTime: "09:00"    # local time
+    consecutiveErrorAlert: 3     # consecutive failing ticks before alerting

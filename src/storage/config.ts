@@ -32,6 +32,14 @@ const settingsSchema = z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),
     rotateDays: z.number().positive(),
   }),
+  reliability: z.object({
+    watchdog: z.object({ tickTimeoutMs: z.number().int().positive() }),
+    reauth: z.object({ alertOnExpiry: z.boolean() }),
+    monitoring: z.object({
+      dailySummaryTime: z.string().regex(/^\d{2}:\d{2}$/, 'must be HH:mm'),
+      consecutiveErrorAlert: z.number().int().positive(),
+    }),
+  }),
 });
 
 const ruleSchema = z.object({

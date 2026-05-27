@@ -13,3 +13,7 @@ test-results/
 .specify/
 Image/
 .claude/agent-memory/
+.claude/skills/
+.claude/agents/
+.claude/settings.json
+.claude/settings.local.json

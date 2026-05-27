@@ -16,6 +16,7 @@ export class AuthSession {
   private browser?: Browser;
   private context?: BrowserContext;
   private page?: Page;
+  private lastCookieMtime = 0;
 
   constructor(
     private settings: Settings,
@@ -39,17 +40,36 @@ export class AuthSession {
     });
     this.context.setDefaultNavigationTimeout(this.settings.browser.navigationTimeoutMs);
     this.page = await this.context.newPage();
+    const st = await fs.stat(cookiesPath).catch(() => null);
+    this.lastCookieMtime = st?.mtimeMs ?? 0;
     await this.ensureLoggedIn();
     return this.page;
   }
 
+  private async rebuildContext(): Promise<void> {
+    const cookiesPath = this.settings.storage.cookiesPath;
+    await this.context?.close().catch(() => {});
+    this.context = await this.browser!.newContext({
+      viewport: this.settings.browser.viewport,
+      storageState: cookiesPath,
+    });
+    this.context.setDefaultNavigationTimeout(this.settings.browser.navigationTimeoutMs);
+    this.page = await this.context.newPage();
+    const st = await fs.stat(cookiesPath).catch(() => null);
+    this.lastCookieMtime = st?.mtimeMs ?? this.lastCookieMtime;
+  }
+
   async ensureLoggedIn(): Promise<void> {
-    if (!this.page) throw new LoginFailedError('Session not started');
+    if (!this.page || !this.browser) throw new LoginFailedError('Session not started');
+    const cookiesPath = this.settings.storage.cookiesPath;
+    const st = await fs.stat(cookiesPath).catch(() => null);
+    if (st && st.mtimeMs > this.lastCookieMtime) {
+      this.logger.info('cookies.json changed on disk — rebuilding browser context to pick up new session');
+      await this.rebuildContext();
+    }
     await this.page.goto(JOB_BOARD_URL, { waitUntil: 'domcontentloaded' });
     if (this.page.url().includes(LOGIN_PAGE_INDICATOR)) {
-      throw new LoginFailedError(
-        `Session expired. Run 'npm run capture-cookies' to log in again.`
-      );
+      throw new LoginFailedError(`Session expired. Run 'npm run capture-cookies' to log in again.`);
     }
     this.logger.info('session valid (cookie-based)');
   }

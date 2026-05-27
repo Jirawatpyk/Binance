@@ -18,6 +18,7 @@ import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
 import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError } from './core/recovery-utils.js';
+import { TranslatorNotFoundError } from './core/errors.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
 const TRANSLATORS_PATH = process.env.TRANSLATORS_PATH ?? './config/translators.yml';
@@ -54,6 +55,8 @@ async function main(): Promise<void> {
     await notifier.notify(`Bot FAILED to start: ${(err as Error).message} — check host logs`, 'error');
     throw err;
   }
+
+  let lastBrowserStart = Date.now();
 
   // One-time maintenance at startup: bound state.json and screenshot disk usage.
   const prunedAtStart = state.pruneOldJobs(settings.scan.processedJobRetainHours);
@@ -111,10 +114,59 @@ async function main(): Promise<void> {
       return; // paused awaiting manual cookie refresh
     }
 
+    // ReAuthManager.ensureReady() may have rebuilt the browser context (cookie
+    // refresh) — adopt the new page into the pipeline.
+    if (session.getPage() !== page) {
+      page = session.getPage();
+      rebuildPipeline(page);
+      logger.info('pipeline rebuilt after context change (cookie refresh)');
+    }
+
+    // Proactive browser recycle for memory hygiene.
+    if (Date.now() - lastBrowserStart >= settings.reliability.browserRecycleHours * 3_600_000) {
+      logger.info('scheduled browser recycle (memory hygiene)');
+      try {
+        page = await session.recover();
+        rebuildPipeline(page);
+        lastBrowserStart = Date.now();
+      } catch (err) {
+        logger.error('browser recycle failed; will retry next cycle', { error: (err as Error).message });
+      }
+    }
+
     try {
       const candidates = await scanner.scan();
+      if (candidates.length === 0) {
+        health.recordZeroScan();
+        if (health.getConsecutiveZeroScans() === settings.reliability.consecutiveZeroScanAlert) {
+          await notifier.notify(
+            `Scanned 0 candidates for ${settings.reliability.consecutiveZeroScanAlert} consecutive ticks — possible selector drift (or genuinely empty board)`,
+            'warn'
+          );
+        }
+      } else {
+        health.resetZeroScans();
+      }
       for (const job of candidates) {
-        if (state.isProcessed(job.id)) continue;
+        const entry = state.getProcessedEntry(job.id);
+        if (entry?.status === 'FULL' || entry?.status === 'ABANDONED') continue;
+        if (
+          entry?.status === 'PARTIAL' &&
+          (entry.retryCount ?? 0) >= settings.assignment.maxPartialRetries
+        ) {
+          logger.error('job exceeded max PARTIAL retries; abandoning', {
+            jobId: job.id,
+            retryCount: entry.retryCount,
+            failed: entry.failed,
+          });
+          await notifier.notify(
+            `Job ${job.id} abandoned after ${settings.assignment.maxPartialRetries} PARTIAL retries — failed: ${entry.failed?.join(', ') ?? '?'}. Manual fix needed (check translators.yml / TMS).`,
+            'error'
+          );
+          state.markAbandoned(job.id);
+          await state.save();
+          continue;
+        }
         if (settings.scan.detailPageDelayMs > 0) {
           await new Promise((r) => setTimeout(r, settings.scan.detailPageDelayMs));
         }
@@ -131,7 +183,16 @@ async function main(): Promise<void> {
               await retry(
                 () => assigner.assign(lang.code, pick.translator, lang.rowIndex),
                 { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
-                (err, attempt) => logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message })
+                (err, attempt) => {
+                  if (
+                    err instanceof TranslatorNotFoundError ||
+                    isBrowserDeadError(err) ||
+                    (err as Error).message?.includes('Timeout')
+                  ) {
+                    throw err; // deterministic / unrecoverable — don't waste retries
+                  }
+                  logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message });
+                }
               );
               assigned[lang.code] = pick.translator;
               if (settings.assignment.dryRun) {
@@ -158,7 +219,7 @@ async function main(): Promise<void> {
               failed.push(lang.code);
               health.recordAssignment(false);
               logger.error('assignment failed', { jobId: job.id, language: lang.code, error: (err as Error).message });
-              await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`);
+              await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay);
             }
           }
           if (!settings.assignment.dryRun && Object.keys(assigned).length > 0) {
@@ -179,7 +240,7 @@ async function main(): Promise<void> {
         } catch (err) {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
           logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
-          await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`);
+          await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`, settings.logging.screenshotMaxPerDay);
           await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }

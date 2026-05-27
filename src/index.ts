@@ -92,10 +92,18 @@ async function main(): Promise<void> {
     if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
       await notifier.notify(health.buildDailySummary(), 'info');
       health.markDailySummarySent();
-      // Daily maintenance alongside the heartbeat.
-      const pruned = state.pruneOldJobs(settings.scan.processedJobRetainHours);
-      if (pruned > 0) { logger.info('pruned old processed jobs', { removed: pruned }); }
-      await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+      // Daily maintenance alongside the heartbeat. Best-effort: never let a
+      // maintenance error abort the tick.
+      try {
+        const pruned = state.pruneOldJobs(settings.scan.processedJobRetainHours);
+        if (pruned > 0) {
+          logger.info('pruned old processed jobs', { removed: pruned });
+          await state.save();
+        }
+        await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+      } catch (err) {
+        logger.warn('daily maintenance failed (non-fatal)', { error: (err as Error).message });
+      }
     }
 
     if (!(await reauth.ensureReady())) {

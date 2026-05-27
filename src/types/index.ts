@@ -40,11 +40,11 @@ export interface TranslatorsConfig {
 
 export interface Settings {
   polling: { intervalMinutes: number; jitterSeconds: number };
-  scan: { lookbackHours: number; maxCandidatesPerTick: number };
+  scan: { lookbackHours: number; maxCandidatesPerTick: number; detailPageDelayMs: number; processedJobRetainHours: number };
   browser: { headless: boolean; viewport: { width: number; height: number }; navigationTimeoutMs: number };
   storage: { statePath: string; logsDir: string; cookiesPath: string };
   assignment: { dryRun: boolean; maxRetries: number; retryDelayMs: number };
-  logging: { level: 'debug' | 'info' | 'warn' | 'error'; rotateDays: number };
+  logging: { level: 'debug' | 'info' | 'warn' | 'error'; rotateDays: number; screenshotRetainDays: number };
   reliability: {
     watchdog: { tickTimeoutMs: number };
     reauth: { alertOnExpiry: boolean };

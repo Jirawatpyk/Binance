@@ -12,6 +12,8 @@ const settingsSchema = z.object({
   scan: z.object({
     lookbackHours: z.number().positive(),
     maxCandidatesPerTick: z.number().int().positive(),
+    detailPageDelayMs: z.number().int().nonnegative(),
+    processedJobRetainHours: z.number().positive(),
   }),
   browser: z.object({
     headless: z.boolean(),
@@ -31,6 +33,7 @@ const settingsSchema = z.object({
   logging: z.object({
     level: z.enum(['debug', 'info', 'warn', 'error']),
     rotateDays: z.number().positive(),
+    screenshotRetainDays: z.number().int().positive(),
   }),
   reliability: z.object({
     watchdog: z.object({ tickTimeoutMs: z.number().int().positive() }),

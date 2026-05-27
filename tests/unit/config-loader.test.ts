@@ -15,30 +15,33 @@ describe('loadSettings', () => {
   it('parses valid settings yaml', () => {
     const p = makeTmp('s.yml', `
 polling: { intervalMinutes: 5, jitterSeconds: 30 }
-scan: { lookbackHours: 48, maxCandidatesPerTick: 50 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96 }
 browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
 storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000 }
-logging: { level: info, rotateDays: 14 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7 }
 reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 } }
 `);
     const s = loadSettings(p);
     expect(s.polling.intervalMinutes).toBe(5);
     expect(s.scan.lookbackHours).toBe(48);
-    expect(s.scan.maxCandidatesPerTick).toBe(50);
+    expect(s.scan.maxCandidatesPerTick).toBe(25);
     expect(s.logging.level).toBe('info');
     expect(s.reliability.watchdog.tickTimeoutMs).toBe(600000);
     expect(s.reliability.monitoring.dailySummaryTime).toBe('09:00');
+    expect(s.scan.detailPageDelayMs).toBe(1500);
+    expect(s.scan.processedJobRetainHours).toBe(96);
+    expect(s.logging.screenshotRetainDays).toBe(7);
   });
 
   it('throws on invalid level', () => {
     const p = makeTmp('s.yml', `
 polling: { intervalMinutes: 5, jitterSeconds: 30 }
-scan: { lookbackHours: 48, maxCandidatesPerTick: 50 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96 }
 browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
 storage: { statePath: x, logsDir: y, cookiesPath: z }
 assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000 }
-logging: { level: WRONG, rotateDays: 14 }
+logging: { level: WRONG, rotateDays: 14, screenshotRetainDays: 7 }
 reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 } }
 `);
     expect(() => loadSettings(p)).toThrow();

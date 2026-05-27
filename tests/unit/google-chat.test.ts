@@ -6,10 +6,23 @@ function card(payload: unknown): {
   cardId: string;
   card: {
     header: { title: string; subtitle: string };
-    sections: Array<{ widgets: Array<{ textParagraph?: { text: string } }> }>;
+    sections: Array<{
+      widgets: Array<{
+        textParagraph?: { text: string };
+        decoratedText?: { topLabel?: string; text: string };
+        divider?: object;
+      }>;
+    }>;
   };
 } {
   return (payload as { cardsV2: unknown[] }).cardsV2[0] as never;
+}
+
+/** Concatenate all renderable text from a summary card's widgets. */
+function allText(c: ReturnType<typeof card>): string {
+  return c.card.sections[0].widgets
+    .map((w) => `${w.decoratedText?.topLabel ?? ''} ${w.decoratedText?.text ?? ''} ${w.textParagraph?.text ?? ''}`)
+    .join('\n');
 }
 
 describe('buildTextCard', () => {
@@ -33,7 +46,7 @@ describe('buildTextCard', () => {
 });
 
 describe('buildAssignmentSummaryCard', () => {
-  it('builds one card with the job count in the header and one widget per job', () => {
+  it('summarises job count, assignment count, and total words in the header', () => {
     const c = card(
       buildAssignmentSummaryCard([
         { jobId: '111', name: 'Job One', wordCount: 34, assigned: { 'lo-LA': 'a@eqho.com' } },
@@ -45,22 +58,50 @@ describe('buildAssignmentSummaryCard', () => {
         },
       ])
     );
-    expect(c.card.header.title).toBe('✅ Assigned 2 job(s) this cycle');
-    expect(c.card.sections[0].widgets).toHaveLength(2);
+    expect(c.card.header.title).toBe('✅ Assigned 2 jobs');
+    // 1 + 2 language assignments; 34 + 7 words
+    expect(c.card.header.subtitle).toBe('3 assignments  ·  41 words');
   });
 
-  it('includes job id, name, word count, and every language → translator', () => {
+  it('renders one decoratedText widget per job, separated by dividers', () => {
+    const c = card(
+      buildAssignmentSummaryCard([
+        { jobId: '111', name: 'Job One', wordCount: 34, assigned: { 'lo-LA': 'a@eqho.com' } },
+        { jobId: '222', name: 'Job Two', wordCount: 7, assigned: { 'km-KH': 'b@eqho.com' } },
+      ])
+    );
+    const widgets = c.card.sections[0].widgets;
+    const jobWidgets = widgets.filter((w) => w.decoratedText);
+    const dividers = widgets.filter((w) => w.divider);
+    expect(jobWidgets).toHaveLength(2);
+    expect(dividers).toHaveLength(1); // divider only between jobs, not before the first
+  });
+
+  it('singular header wording for a single job/assignment', () => {
+    const c = card(
+      buildAssignmentSummaryCard([
+        { jobId: '999', name: 'Solo', wordCount: 1000, assigned: { 'lo-LA': 'a@eqho.com' } },
+      ])
+    );
+    expect(c.card.header.title).toBe('✅ Assigned 1 job');
+    expect(c.card.header.subtitle).toBe('1 assignment  ·  1,000 words');
+  });
+
+  it('includes job id, name, word count, flag, short handle, and full translator email', () => {
     const c = card(
       buildAssignmentSummaryCard([
         { jobId: '333', name: 'Finance App', wordCount: 12, assigned: { 'lo-LA': 'lo@eqho.com', 'km-KH': 'kh@eqho.com' } },
       ])
     );
-    const text = c.card.sections[0].widgets[0].textParagraph?.text ?? '';
+    const text = allText(c);
     expect(text).toContain('Job 333');
     expect(text).toContain('Finance App');
     expect(text).toContain('12 words');
-    expect(text).toContain('lo-LA → lo@eqho.com');
-    expect(text).toContain('km-KH → kh@eqho.com');
+    // • <b>code</b> → handle (full email)
+    expect(text).toContain('<b>lo-LA</b> → lo ');
+    expect(text).toContain('(lo@eqho.com)');
+    expect(text).toContain('<b>km-KH</b> → kh ');
+    expect(text).toContain('(kh@eqho.com)');
   });
 
   it('escapes HTML-special characters in job id, name, and translator while keeping intentional markup', () => {
@@ -69,13 +110,12 @@ describe('buildAssignmentSummaryCard', () => {
         { jobId: 'J<1>', name: 'Finance & Loans <Test>', wordCount: 5, assigned: { 'lo-LA': 'user&hack@eqho.com' } },
       ])
     );
-    const text = c.card.sections[0].widgets[0].textParagraph?.text ?? '';
+    const text = allText(c);
     expect(text).toContain('Job J&lt;1&gt;');
     expect(text).toContain('Finance &amp; Loans &lt;Test&gt;');
     expect(text).toContain('user&amp;hack@eqho.com');
     // intentional markup must survive (not escaped)
     expect(text).toContain('<b>');
     expect(text).toContain('<br>');
-    expect(text).toContain('&nbsp;');
   });
 });

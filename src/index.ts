@@ -105,6 +105,7 @@ async function main(): Promise<void> {
                 );
               }
             } catch (err) {
+              if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery
               failed.push(lang.code);
               health.recordAssignment(false);
               logger.error('assignment failed', { jobId: job.id, language: lang.code, error: (err as Error).message });

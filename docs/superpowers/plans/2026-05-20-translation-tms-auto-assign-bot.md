@@ -145,8 +145,8 @@ test-results/
 - [ ] **Step 1.4: Write `.env.example`**
 
 ```
-TMS_USERNAME=binance@eqho.com
-TMS_PASSWORD=Eqho-Binance2025
+TMS_USERNAME=<your-tms-email>
+TMS_PASSWORD=<redacted — set in .env only, never in committed docs>
 ```
 
 - [ ] **Step 1.5: Write `playwright.config.ts`**

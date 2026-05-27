@@ -266,8 +266,8 @@ logging:
 
 ### `.env` (ไม่ commit)
 ```
-TMS_USERNAME=binance@eqho.com
-TMS_PASSWORD=Eqho-Binance2025
+TMS_USERNAME=<your-tms-email>
+TMS_PASSWORD=<redacted — set in .env only, never in committed docs>
 ```
 
 ---

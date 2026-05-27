@@ -15,6 +15,9 @@ export class Assigner {
     const waitingTab = this.page.locator('text=Waiting').first();
     if (await waitingTab.isVisible().catch(() => false)) {
       await waitingTab.click();
+      // Wait for the Ant spinner to settle before the table read below, so we
+      // don't act on stale rows still being replaced after the tab switch.
+      await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 10_000 }).catch(() => {});
       await this.page.waitForSelector('table tbody tr', { timeout: 10_000 }).catch(() => {});
     }
 
@@ -31,7 +34,7 @@ export class Assigner {
     }
 
     await assignBtn.click();
-    const modal = this.page.locator('[role="dialog"], .modal').first();
+    const modal = this.page.locator('[role="dialog"]').first();
     await modal.waitFor({ state: 'visible', timeout: 10_000 });
 
     // Wait for the loading spinner to disappear — the modal shows "Loading available users..."

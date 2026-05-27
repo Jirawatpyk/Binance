@@ -39,6 +39,9 @@ export class JobScanner {
     private page: Page,
     private logger: winston.Logger,
     private scanConfig: ScanConfig,
+    // Optional operator alert for silent-degradation cases (date filter failed
+    // to apply, pagination cap hit). Fire-and-forget; must never throw.
+    private onAlert: (msg: string) => void = () => {},
   ) {}
 
   // -------------------------------------------------------------------------
@@ -143,6 +146,9 @@ export class JobScanner {
     const rangePicker = this.page.locator('.ant-picker-range').nth(1); // Created From/To
     if (!(await rangePicker.isVisible({ timeout: 5_000 }).catch(() => false))) {
       this.logger.warn('setDateFilter: Created date range picker not visible — skipping date filter');
+      // The client-side Created guard still bounds results, but the board-level
+      // filter silently collapsing usually signals a UI/selector change.
+      this.onAlert('Job board date filter could not be applied (Created range picker not found) — possible UI change; scan falling back to client-side date filtering');
       return;
     }
 
@@ -354,6 +360,7 @@ export class JobScanner {
       this.logger.warn('MAX_PAGES cap reached while more pages exist — some jobs may be missed', {
         maxPages: MAX_PAGES,
       });
+      this.onAlert(`Pagination hit the ${MAX_PAGES}-page cap for ${lang} — some jobs may be unscanned this tick (volume spike or sort issue)`);
     }
 
     return allRows;

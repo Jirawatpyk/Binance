@@ -32,6 +32,11 @@ export class JobProcessor {
       )
       .catch(() => {});
     const languages = await this.parseLanguageRows();
+    if ((!Number.isFinite(wordCount) || wordCount <= 0) && languages.length > 0) {
+      // Word count drives translator-tier selection; a silent 0/NaN on a job
+      // that has assignable rows means the selector likely missed the value.
+      this.logger.warn('word count parsed as 0/NaN despite assignable rows — check selector', { jobId, wordCount });
+    }
     this.logger.info('job detail parsed', { jobId, wordCount, languages: languages.map((l) => l.code) });
     return { jobId, wordCount, targetLanguages: languages };
   }

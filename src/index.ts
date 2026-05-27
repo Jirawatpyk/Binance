@@ -67,13 +67,16 @@ async function main(): Promise<void> {
   }
   await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
 
+  const scanAlert = (msg: string): void => {
+    void notifier.notify(msg, 'warn');
+  };
   const engine = new AssignmentEngine(translators, state);
-  let scanner = new JobScanner(page, logger, settings.scan);
+  let scanner = new JobScanner(page, logger, settings.scan, scanAlert);
   let processor = new JobProcessor(page, logger);
   let assigner = new Assigner(page, logger, settings.assignment.dryRun);
 
   const rebuildPipeline = (p: Page): void => {
-    scanner = new JobScanner(p, logger, settings.scan);
+    scanner = new JobScanner(p, logger, settings.scan, scanAlert);
     processor = new JobProcessor(p, logger);
     assigner = new Assigner(p, logger, settings.assignment.dryRun);
   };
@@ -277,9 +280,19 @@ async function main(): Promise<void> {
       if (isBrowserDeadError(err)) {
         logger.error('browser died; recovering', { error: (err as Error).message });
         await notifier.notify('Browser crashed — recovering', 'warn');
-        page = await session.recover();
-        rebuildPipeline(page);
-        lastBrowserStart = Date.now();
+        try {
+          page = await session.recover();
+          rebuildPipeline(page);
+          lastBrowserStart = Date.now();
+        } catch (recoverErr) {
+          // recover() can itself throw (e.g. cookies gone → LoginFailedError).
+          // Don't let it escape the tick uncounted/un-alerted: record the error
+          // and notify. The next tick's reauth.ensureReady() drives PAUSED_AUTH
+          // if the session is genuinely expired.
+          health.recordTickError();
+          logger.error('browser recovery failed', { error: (recoverErr as Error).message });
+          await notifier.notify(`Browser recovery failed: ${(recoverErr as Error).message}`, 'error');
+        }
       } else {
         health.recordTickError();
         logger.error('tick failed', { error: (err as Error).message });

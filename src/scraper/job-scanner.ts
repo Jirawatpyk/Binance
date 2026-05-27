@@ -225,18 +225,22 @@ export class JobScanner {
       throw new Error('setLanguageFilter: .ant-select nth(1) not visible — page structure may have changed');
     }
 
-    // Clear any existing tags (there may be one from the previous iteration)
-    // The remove icon on each selected tag: .ant-select-selection-item-remove
-    const removeButtons = this.page.locator('.ant-select-selection-item-remove');
-    const removeCount = await removeButtons.count();
-    for (let i = 0; i < removeCount; i++) {
-      // Always remove the first one (they shift after each removal)
+    // Clear any existing tags (there may be one from the previous language
+    // iteration). This is a multi-select, so a stale tag left here would be
+    // ADDED to — scanning a wrong/combined language set. A fixed count can
+    // under-remove if a click doesn't register, so remove until none remain
+    // (bounded), then assert the selection is actually empty before continuing.
+    for (let attempt = 0; attempt < 5; attempt++) {
       const btn = this.page.locator('.ant-select-selection-item-remove').first();
-      const visible = await btn.isVisible({ timeout: 1_000 }).catch(() => false);
-      if (visible) {
-        await btn.click();
-        await this.page.waitForTimeout(200);
-      }
+      if (!(await btn.isVisible({ timeout: 1_000 }).catch(() => false))) break;
+      await btn.click();
+      await this.page.waitForTimeout(200);
+    }
+    const remaining = await this.page.locator('.ant-select-selection-item-remove').count();
+    if (remaining > 0) {
+      throw new Error(
+        `setLanguageFilter: ${remaining} stale language tag(s) could not be cleared — refusing to scan a wrong/combined language set`
+      );
     }
 
     // Open the dropdown and search for the language
@@ -310,7 +314,12 @@ export class JobScanner {
       // Stuck-detection: if this page has the exact same ids as the previous page, Next didn't advance
       const currentPageIdSignature = rows.map((r) => r.id).sort().join(',');
       if (pageNum > 1 && currentPageIdSignature === prevPageIdSignature) {
+        // We only get here after clicking an enabled Next and waiting for the
+        // ids to change (a true last page exits earlier via the disabled/absent
+        // Next checks below). Same ids = Next didn't advance — a real stuck/slow
+        // condition that can silently truncate this language's results, so alert.
         this.logger.warn('pagination stuck (page ids unchanged after Next click); breaking', { lang, pageNum });
+        this.onAlert(`Pagination stuck for ${lang} at page ${pageNum} (Next didn't advance) — later pages may be unscanned this tick`);
         break;
       }
       prevPageIdSignature = currentPageIdSignature;

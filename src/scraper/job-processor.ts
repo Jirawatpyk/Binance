@@ -55,11 +55,17 @@ export class JobProcessor {
     const out: TargetLanguage[] = [];
     for (let i = 0; i < count; i++) {
       const row = rows.nth(i);
-      const langText = (await row.locator('td').nth(0).textContent() ?? '').trim();
+      const cells = row.locator('td');
+      // The language table puts the code in td[0], translator in td[2], status
+      // in td[5]. A row with fewer cells belongs to a different/empty table on
+      // the page — skip it instead of reading garbage indices, which would
+      // mis-flag a row as already-assigned or non-WAITING (job wrongly FULL).
+      if ((await cells.count()) < 6) continue;
+      const langText = (await cells.nth(0).textContent() ?? '').trim();
       const code = this.detectCode(langText);
       if (!code) continue;
-      const translatorText = (await row.locator('td').nth(2).textContent() ?? '').trim();
-      const statusText = (await row.locator('td').nth(5).textContent() ?? '').trim();
+      const translatorText = (await cells.nth(2).textContent() ?? '').trim();
+      const statusText = (await cells.nth(5).textContent() ?? '').trim();
       out.push({
         code,
         status: statusText || 'UNKNOWN',

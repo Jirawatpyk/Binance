@@ -95,11 +95,20 @@ async function main(): Promise<void> {
                 (err, attempt) => logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message })
               );
               assigned[lang.code] = pick.translator;
-              health.recordAssignment(true);
-              if (pick.useRoundRobin && pick.rrKey && !settings.assignment.dryRun) {
-                state.incrementRR(pick.rrKey);
-              }
-              if (!settings.assignment.dryRun) {
+              if (settings.assignment.dryRun) {
+                logger.info('[DRY-RUN] would assign (not counted in metrics)', {
+                  jobId: job.id,
+                  name: job.name,
+                  language: lang.code,
+                  translator: pick.translator,
+                });
+              } else {
+                // Real assignment only — dry-run must not affect health metrics,
+                // round-robin counters, or notifications.
+                health.recordAssignment(true);
+                if (pick.useRoundRobin && pick.rrKey) {
+                  state.incrementRR(pick.rrKey);
+                }
                 await notifier.notify(
                   `Assigned job ${job.id} "${job.name}" — ${lang.code} → ${pick.translator} (${detail.wordCount} words)`,
                   'info'
@@ -112,6 +121,9 @@ async function main(): Promise<void> {
               logger.error('assignment failed', { jobId: job.id, language: lang.code, error: (err as Error).message });
               await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`);
             }
+          }
+          if (!settings.assignment.dryRun && Object.keys(assigned).length > 0) {
+            health.recordJobAssigned();
           }
           if (failed.length === 0 && Object.keys(assigned).length > 0) {
             state.markProcessed(job.id, assigned);

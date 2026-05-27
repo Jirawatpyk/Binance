@@ -4,7 +4,8 @@ import { localDateString, isNewDay, isDailySummaryDue } from './health-utils.js'
 
 interface TodayCounters {
   date: string;
-  assigned: number;
+  assigned: number; // language-level assignments
+  jobsAssigned: number; // jobs that received at least one assignment
   failed: number;
   authEpisodes: number;
 }
@@ -27,7 +28,7 @@ export class HealthMonitor {
       lastTickAt: null,
       lastSuccessAt: null,
       consecutiveErrors: 0,
-      today: { date: localDateString(now), assigned: 0, failed: 0, authEpisodes: 0 },
+      today: { date: localDateString(now), assigned: 0, jobsAssigned: 0, failed: 0, authEpisodes: 0 },
       lastDailySummaryDate: null,
     };
   }
@@ -43,7 +44,7 @@ export class HealthMonitor {
 
   private rollover(now: Date): void {
     if (isNewDay(now, this.state.today.date)) {
-      this.state.today = { date: localDateString(now), assigned: 0, failed: 0, authEpisodes: 0 };
+      this.state.today = { date: localDateString(now), assigned: 0, jobsAssigned: 0, failed: 0, authEpisodes: 0 };
     }
   }
 
@@ -66,6 +67,11 @@ export class HealthMonitor {
     else this.state.today.failed += 1;
   }
 
+  /** Count one job that received at least one (real) language assignment. */
+  recordJobAssigned(): void {
+    this.state.today.jobsAssigned += 1;
+  }
+
   recordAuthEpisode(): void {
     this.state.today.authEpisodes += 1;
   }
@@ -86,8 +92,8 @@ export class HealthMonitor {
     const t = this.state.today;
     const uptimeH = ((now.getTime() - new Date(this.state.startedAt).getTime()) / 3_600_000).toFixed(1);
     return (
-      `Daily summary (${t.date}): assigned ${t.assigned}, failed ${t.failed}, ` +
-      `auth episodes ${t.authEpisodes}, uptime ${uptimeH}h`
+      `Daily summary (${t.date}): assigned ${t.assigned} language(s) across ${t.jobsAssigned} job(s), ` +
+      `failed ${t.failed}, auth episodes ${t.authEpisodes}, uptime ${uptimeH}h`
     );
   }
 

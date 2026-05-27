@@ -21,6 +21,16 @@ describe('HealthMonitor', () => {
     expect(monitor.snapshot().today.failed).toBe(1);
   });
 
+  it('counts jobs assigned separately from language assignments', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    // one job with 2 languages
+    monitor.recordAssignment(true);
+    monitor.recordAssignment(true);
+    monitor.recordJobAssigned();
+    expect(monitor.snapshot().today.assigned).toBe(2); // languages
+    expect(monitor.snapshot().today.jobsAssigned).toBe(1); // jobs
+  });
+
   it('resets consecutiveErrors on success and increments on error', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
     monitor.recordTickError();

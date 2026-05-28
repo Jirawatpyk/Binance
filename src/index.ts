@@ -346,12 +346,13 @@ async function main(): Promise<void> {
                   role,
                   assignee,
                 });
-              } else {
-                // Real assignment only — dry-run must not affect health metrics,
-                // round-robin counters, or notifications.
+              } else if (role === 'translator') {
+                // Real translator assignment only. Dry-run never affects metrics/
+                // RR. Reviewer assigns are deliberately kept OUT of the health
+                // metrics (today.assigned/byLang/failed) — they're reported via
+                // the per-tick review Chat card instead, so the daily summary
+                // stays a consistent translation-throughput view.
                 health.recordAssignment(true, lang.code);
-                // `pick` is non-null only on the translator path, so this also
-                // guarantees reviewer assigns never touch the round-robin counter.
                 if (pick?.useRoundRobin && pick.rrKey) {
                   state.incrementRR(pick.rrKey);
                 }
@@ -359,7 +360,7 @@ async function main(): Promise<void> {
             } catch (err) {
               if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery
               failed.push(lang.code);
-              health.recordAssignment(false, lang.code);
+              if (role === 'translator') health.recordAssignment(false, lang.code);
               logger.error('assignment failed', { jobId: job.id, language: lang.code, role, error: (err as Error).message });
               await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay).catch(() => null);
             }

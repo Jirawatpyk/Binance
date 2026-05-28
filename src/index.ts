@@ -350,8 +350,10 @@ async function main(): Promise<void> {
                 // Real assignment only — dry-run must not affect health metrics,
                 // round-robin counters, or notifications.
                 health.recordAssignment(true, lang.code);
-                if (role === 'translator' && pick!.useRoundRobin && pick!.rrKey) {
-                  state.incrementRR(pick!.rrKey);
+                // `pick` is non-null only on the translator path, so this also
+                // guarantees reviewer assigns never touch the round-robin counter.
+                if (pick?.useRoundRobin && pick.rrKey) {
+                  state.incrementRR(pick.rrKey);
                 }
               }
             } catch (err) {

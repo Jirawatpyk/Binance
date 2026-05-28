@@ -181,6 +181,8 @@ async function main(): Promise<void> {
   let assigner = new Assigner(page, logger, settings.assignment.dryRun);
 
   const rebuildPipeline = (p: Page): void => {
+    // reviewScan is config-derived and stateless (its isSkippable closes over the
+    // long-lived `state`), so it is reused as-is — only the Playwright page is rebuilt.
     scanner = new JobScanner(p, logger, settings.scan, scanAlert, reviewScan);
     processor = new JobProcessor(p, logger);
     assigner = new Assigner(p, logger, settings.assignment.dryRun);

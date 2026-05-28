@@ -81,10 +81,12 @@ export class SheetsAssignmentLogger {
   async appendAssignments(items: AssignmentSummaryItem[]): Promise<void> {
     if (this.disabled || !this.config || !this.jwt || items.length === 0) return;
 
-    // Phase 1 — read each tab's used rows in isolation. The A:G row count gives
-    // the true next empty row (existing rows may fill only B/D/F with column C
-    // blank, so counting column C alone undercounts and would overwrite real
-    // rows). Column C (index 2) within those rows is the dedup key. A tab whose
+    // Phase 1 — read each tab's used rows in isolation. We read C:D: column D
+    // (File name) is populated on every row by both humans and the bot, so the
+    // row count gives the true next empty row (counting column C alone would
+    // undercount — humans leave C blank — and overwrite real rows). Column C
+    // (index 0 of the C:D slice) is the dedup key. Reading two columns instead
+    // of A:G keeps the per-tick payload small as the sheet grows. A tab whose
     // read fails is left out of startRowByTab and skipped in phase 3.
     const startRowByTab: Record<string, number> = {};
     const existingIdsByTab: Record<string, Set<string>> = {};
@@ -93,7 +95,7 @@ export class SheetsAssignmentLogger {
       try {
         const used = await this.fetchUsedRows(tab);
         startRowByTab[tab] = used.length + 1;
-        existingIdsByTab[tab] = new Set(used.map((r) => (r[2] ?? '').trim()).filter(Boolean));
+        existingIdsByTab[tab] = new Set(used.map((r) => (r[0] ?? '').trim()).filter(Boolean));
       } catch (err) {
         anyFailure = true;
         if (this.disableIfPermanent('read', tab, err)) return;
@@ -189,11 +191,11 @@ export class SheetsAssignmentLogger {
     return (body.sheets ?? []).map((s) => s.properties?.title ?? '');
   }
 
-  /** All rows with data in columns A:G. The API omits trailing empty rows, so
-   *  `length` is the last used row across the whole table (→ next empty row);
-   *  each row's column C (index 2) is the dedup key. */
+  /** Rows of columns C:D (Job ID, File name). The API omits trailing empty rows,
+   *  and column D is populated on every used row, so `length` is the last used
+   *  row (→ next empty row); each row's column C (index 0) is the dedup key. */
   private async fetchUsedRows(tab: string): Promise<string[][]> {
-    const range = encodeURIComponent(`${this.a1Tab(tab)}!A:G`);
+    const range = encodeURIComponent(`${this.a1Tab(tab)}!C:D`);
     const res = await this.request(`${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}`, `read ${tab}`);
     const body = (await res.json()) as { values?: string[][] };
     return body.values ?? [];

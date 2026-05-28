@@ -31,6 +31,19 @@ describe('HealthMonitor', () => {
     expect(monitor.snapshot().today.jobsAssigned).toBe(1); // jobs
   });
 
+  it('counts reviewer assignments separately and surfaces them in the summary', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    monitor.recordAssignment(true); // a translation
+    monitor.recordReview();
+    monitor.recordReview();
+    expect(monitor.snapshot().today.reviewed).toBe(2);
+    expect(monitor.snapshot().today.assigned).toBe(1); // reviews don't inflate translations
+    expect(monitor.dailySummaryStats(new Date(2026, 4, 7, 9, 0)).reviewed).toBe(2);
+    // rollover resets the reviewed counter with the rest of today
+    monitor.recordTickStart(new Date(2026, 4, 8, 0, 5));
+    expect(monitor.snapshot().today.reviewed).toBe(0);
+  });
+
   it('resets consecutiveErrors on success and increments on error', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
     monitor.recordTickError();

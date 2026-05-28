@@ -67,6 +67,19 @@ const settingsSchema = z.object({
         }),
     })
     .optional(),
+  review: z
+    .object({
+      enabled: z.boolean(),
+      reviewers: z
+        .object({
+          'lo-LA': z.string().email().optional(),
+          'km-KH': z.string().email().optional(),
+        })
+        // .strict() so a typo'd key (e.g. lo_LA) fails fast at load instead of
+        // being silently stripped — which would leave that language un-reviewed.
+        .strict(),
+    })
+    .optional(),
 }).refine(
   (s) => s.scan.processedJobRetainHours >= s.scan.lookbackHours,
   { message: 'scan.processedJobRetainHours must be >= scan.lookbackHours' }

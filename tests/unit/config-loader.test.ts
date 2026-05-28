@@ -120,6 +120,63 @@ sheets: { enabled: true, spreadsheetId: "SID", credentialsPath: ./google-credent
 `);
     expect(() => loadSettings(p)).toThrow();
   });
+
+  it('parses an optional review block', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+review: { enabled: true, reviewers: { lo-LA: "LO_T2@eqho.com" } }
+`);
+    const s = loadSettings(p);
+    expect(s.review?.enabled).toBe(true);
+    expect(s.review?.reviewers['lo-LA']).toBe('LO_T2@eqho.com');
+  });
+
+  it('loads fine when the review block is omitted', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+`);
+    expect(loadSettings(p).review).toBeUndefined();
+  });
+
+  it('rejects a review reviewer that is not a valid email', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+review: { enabled: true, reviewers: { lo-LA: "not-an-email" } }
+`);
+    expect(() => loadSettings(p)).toThrow();
+  });
+
+  it('rejects a typo\'d reviewer language key (strict)', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+review: { enabled: true, reviewers: { lo_LA: "LO_T2@eqho.com" } }
+`);
+    expect(() => loadSettings(p)).toThrow();
+  });
 });
 
 describe('loadTranslators', () => {

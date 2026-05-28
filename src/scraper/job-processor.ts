@@ -56,20 +56,26 @@ export class JobProcessor {
     for (let i = 0; i < count; i++) {
       const row = rows.nth(i);
       const cells = row.locator('td');
-      // The language table puts the code in td[0], translator in td[2], status
-      // in td[5]. A row with fewer cells belongs to a different/empty table on
-      // the page — skip it instead of reading garbage indices, which would
-      // mis-flag a row as already-assigned or non-WAITING (job wrongly FULL).
+      // The language table puts the code in td[0], translator in td[2],
+      // reviewer in td[3], status in td[5]. A row with fewer cells belongs to a
+      // different/empty table on the page — skip it instead of reading garbage
+      // indices, which would mis-flag a row as already-assigned or non-WAITING.
       if ((await cells.count()) < 6) continue;
       const langText = (await cells.nth(0).textContent() ?? '').trim();
       const code = this.detectCode(langText);
       if (!code) continue;
       const translatorText = (await cells.nth(2).textContent() ?? '').trim();
+      const reviewerText = (await cells.nth(3).textContent() ?? '').trim();
       const statusText = (await cells.nth(5).textContent() ?? '').trim();
+      // An assigned translator/reviewer is always an email; treat a cell as
+      // "set" only when it contains '@', so an empty-state placeholder
+      // ('-', em-dash, NBSP, etc.) reliably reads as null rather than silently
+      // blocking an assignment for that role.
       out.push({
         code,
         status: statusText || 'UNKNOWN',
-        translator: translatorText === '-' || translatorText === '' ? null : translatorText,
+        translator: translatorText.includes('@') ? translatorText : null,
+        reviewer: reviewerText.includes('@') ? reviewerText : null,
         rowIndex: i,
       });
     }

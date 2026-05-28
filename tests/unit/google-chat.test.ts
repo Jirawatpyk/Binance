@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildTextCard, buildAssignmentSummaryCard, buildDailySummaryCard, dueColor } from '../../src/notifications/google-chat.js';
+import { buildTextCard, buildAssignmentSummaryCard, buildDailySummaryCard, buildReviewSummaryCard, dueColor } from '../../src/notifications/google-chat.js';
 
 // Narrow helper to reach into the cardsV2 payload without `any` everywhere.
 function card(payload: unknown): {
@@ -158,11 +158,49 @@ describe('dueColor', () => {
   });
 });
 
+describe('buildReviewSummaryCard', () => {
+  it('summarises reviewer assignments per job', () => {
+    const c = card(
+      buildReviewSummaryCard([
+        { jobId: '62403', name: 'alicloud-ios', reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+      ])
+    );
+    expect(c.card.header.title).toBe('🔍 Reviewer assigned — 1 job');
+    const text = allText(c);
+    expect(text).toContain('Job 62403');
+    expect(text).toContain('alicloud-ios');
+    expect(text).toContain('<b>lo-LA</b> → LO_T2@eqho.com');
+  });
+
+  it('pluralises and separates multiple jobs with a divider', () => {
+    const c = card(
+      buildReviewSummaryCard([
+        { jobId: '1', name: 'A', reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+        { jobId: '2', name: 'B', reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+      ])
+    );
+    expect(c.card.header.title).toBe('🔍 Reviewer assigned — 2 jobs');
+    const widgets = c.card.sections[0].widgets;
+    expect(widgets.filter((w) => w.decoratedText)).toHaveLength(2);
+    expect(widgets.filter((w) => w.divider)).toHaveLength(1);
+  });
+
+  it('escapes HTML-special characters in name and reviewer', () => {
+    const text = allText(
+      card(buildReviewSummaryCard([{ jobId: 'J<1>', name: 'A & B', reviewed: { 'lo-LA': 'r&x@eqho.com' } }]))
+    );
+    expect(text).toContain('Job J&lt;1&gt;');
+    expect(text).toContain('A &amp; B');
+    expect(text).toContain('r&amp;x@eqho.com');
+  });
+});
+
 describe('buildDailySummaryCard', () => {
   const stats = {
     date: '2026-05-27',
     assigned: 5,
     jobsAssigned: 3,
+    reviewed: 2,
     byLang: { 'lo-LA': 2, 'km-KH': 3 } as Record<'lo-LA' | 'km-KH', number>,
     failed: 0,
     authEpisodes: 1,
@@ -185,6 +223,7 @@ describe('buildDailySummaryCard', () => {
     expect(text).toContain('<b>5</b> language(s) across <b>3</b> job(s)');
     expect(text).toContain('lo-LA <b>2</b>');
     expect(text).toContain('km-KH <b>3</b>');
+    expect(text).toContain('<b>2</b> reviewer assignment(s)');
     expect(text).toContain('<b>240</b> polls');
     expect(text).toContain('<b>12.3h</b>');
     expect(text).toContain('2026-05-27 11:42 UTC'); // last assignment

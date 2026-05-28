@@ -56,3 +56,11 @@ sheets:
   tabs:
     lo-LA: "Lao Assign"     # lo-LA assignments are written here
     km-KH: "Khmer Assign"   # km-KH assignments are written here
+
+review:
+  # Assign a fixed reviewer to lo-LA rows in WAITING_REVIEW (after translation is
+  # done). Disabled by default. Only languages listed here get a reviewer; others
+  # are skipped. Dry-run gates this exactly like translator assignment.
+  enabled: false
+  reviewers:
+    lo-LA: "LO_T2@eqho.com"

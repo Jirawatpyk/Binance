@@ -9,6 +9,10 @@ export interface Job {
   languagesNeeded: string[];
   wordCount: number;
   detailUrl: string;
+  // True when this candidate was surfaced ONLY by the decoupled review scan
+  // (created beyond the translation window). The tick loop assigns a reviewer to
+  // such candidates but never a translator — see src/index.ts.
+  reviewOnly?: boolean;
 }
 
 export interface TargetLanguage {
@@ -61,6 +65,8 @@ export interface Settings {
   };
   review?: {
     enabled: boolean;
+    scanLookbackHours: number;
+    maxCandidatesPerTick: number;
     reviewers: Partial<Record<SupportedLanguage, string>>;
   };
 }

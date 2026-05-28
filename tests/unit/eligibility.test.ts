@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { pendingRole } from '../../src/assignment/eligibility.js';
+import { pendingRole, canAssignRole } from '../../src/assignment/eligibility.js';
 import type { TargetLanguage } from '../../src/types/index.js';
 
 function row(partial: Partial<TargetLanguage>): TargetLanguage {
@@ -39,5 +39,25 @@ describe('pendingRole', () => {
 
   it('reviewer branch ignores the translator field (returns reviewer even if translator is null)', () => {
     expect(pendingRole(row({ status: 'WAITING_REVIEW', translator: null, reviewer: null }), reviewers)).toBe('reviewer');
+  });
+});
+
+describe('canAssignRole', () => {
+  it('blocks a translator on a review-only candidate (the backlog guard)', () => {
+    expect(canAssignRole(true, 'translator')).toBe(false);
+  });
+
+  it('allows a reviewer on a review-only candidate', () => {
+    expect(canAssignRole(true, 'reviewer')).toBe(true);
+  });
+
+  it('allows a translator on a normal candidate', () => {
+    expect(canAssignRole(false, 'translator')).toBe(true);
+    expect(canAssignRole(undefined, 'translator')).toBe(true);
+  });
+
+  it('allows a reviewer on a normal candidate', () => {
+    expect(canAssignRole(false, 'reviewer')).toBe(true);
+    expect(canAssignRole(undefined, 'reviewer')).toBe(true);
   });
 });

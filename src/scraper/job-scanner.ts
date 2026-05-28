@@ -1,7 +1,8 @@
 import type { Page } from 'playwright';
-import { type Job, SUPPORTED_LANGUAGES } from '../types/index.js';
+import { type Job, type SupportedLanguage, SUPPORTED_LANGUAGES } from '../types/index.js';
 import type winston from 'winston';
 import { parseCreatedUtc, formatBoardDate } from './date-utils.js';
+import { selectReviewCandidates } from './review-candidates.js';
 
 const JOB_BOARD_URL = 'https://www.translationtms.com/job-board';
 
@@ -19,6 +20,18 @@ const JOB_BOARD_URL = 'https://www.translationtms.com/job-board';
 export interface ScanConfig {
   lookbackHours: number;
   maxCandidatesPerTick: number;
+}
+
+/**
+ * Optional decoupled review-scan inputs. When provided, scan() runs a second
+ * pass (wider Created window) for these languages and tags the results
+ * reviewOnly. When omitted, scan() behaves exactly as before (translation only).
+ */
+export interface ReviewScanOptions {
+  languages: SupportedLanguage[];          // languages that have a configured reviewer
+  lookbackHours: number;                   // review.scanLookbackHours — wider than the translation window
+  maxCandidatesPerTick: number;            // review.maxCandidatesPerTick — separate per-tick cap
+  isSkippable: (jobId: string) => boolean; // state-backed: ABANDONED or still cooling down
 }
 
 /** Internal row shape before Job transformation (includes created for client-side filter) */
@@ -42,6 +55,8 @@ export class JobScanner {
     // Optional operator alert for silent-degradation cases (date filter failed
     // to apply, pagination cap hit). Fire-and-forget; must never throw.
     private onAlert: (msg: string) => void = () => {},
+    // Optional decoupled review scan. Undefined → no second pass (legacy behavior).
+    private reviewScan?: ReviewScanOptions,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -113,11 +128,75 @@ export class JobScanner {
       candidates = candidates.slice(0, this.scanConfig.maxCandidatesPerTick);
     }
 
+    // Decoupled review pass: surface aged claimable jobs the translation window
+    // hides (their rows may still be WAITING_REVIEW — resolved per-row later by
+    // the tick loop). Deduped against ALL translation candidates found this tick
+    // (jobMap, including any truncated above) so a job is never both.
+    const reviewCandidates = await this.scanForReview(jobMap);
+
+    const all = [...candidates, ...reviewCandidates];
     this.logger.info('job scan complete', {
       candidates: candidates.length,
-      candidateIds: candidates.map((j) => j.id),
+      reviewCandidates: reviewCandidates.length,
+      candidateIds: all.map((j) => j.id),
     });
-    return candidates;
+    return all;
+  }
+
+  /**
+   * Second scan pass for jobs that need a REVIEWER. Uses a wider Created window
+   * (reviewScan.lookbackHours) than the translation pass so jobs that reached
+   * WAITING_REVIEW days after creation are still found, but only for languages
+   * with a configured reviewer. Results are tagged reviewOnly so the tick loop
+   * assigns a reviewer (never a translator) to them. Returns [] when no
+   * reviewScan was provided. Deduped against the translation candidates and
+   * filtered by the state-backed skip predicate; newest (highest id) first so the
+   * recently-translated jobs that actually need review win the per-tick cap ahead
+   * of aged backlog that merely shares the lo-LA board filter.
+   */
+  private async scanForReview(translationMap: Map<string, Job>): Promise<Job[]> {
+    const rs = this.reviewScan;
+    if (!rs || rs.languages.length === 0) return [];
+
+    const reviewTo = new Date();
+    const reviewFrom = new Date(Date.now() - rs.lookbackHours * 3600_000);
+    this.logger.info('review scan window', {
+      lookbackHours: rs.lookbackHours,
+      createdFrom: reviewFrom.toISOString(),
+      createdTo: reviewTo.toISOString(),
+      languages: rs.languages,
+    });
+
+    // Re-set the board Created filter to the wider review window. Same ±1 day
+    // padding the translation pass uses (the board filter is date-only / local
+    // tz); the exact UTC cutoff is still enforced client-side in collectAllPages.
+    const DAY_MS = 24 * 3600_000;
+    await this.setDateFilter(
+      new Date(reviewFrom.getTime() - DAY_MS),
+      new Date(reviewTo.getTime() + DAY_MS)
+    );
+
+    const found: Job[] = [];
+    for (const lang of rs.languages) {
+      this.logger.info('scanning review language', { lang });
+      const jobs = await this.scanForLanguage(lang, reviewFrom);
+      found.push(...jobs);
+      this.logger.info('review language scan complete', { lang, found: jobs.length });
+    }
+
+    // Pure dedup (vs translation candidates + within the list) + skip-predicate
+    // filter + reviewOnly tag + newest-first sort (unit-tested in
+    // review-candidates.test.ts). The cap is applied here so the truncation is
+    // logged for the operator.
+    const selected = selectReviewCandidates(found, new Set(translationMap.keys()), rs.isSkippable);
+    if (selected.length > rs.maxCandidatesPerTick) {
+      this.logger.warn('review candidate count exceeds cap; truncating', {
+        found: selected.length,
+        cap: rs.maxCandidatesPerTick,
+      });
+      return selected.slice(0, rs.maxCandidatesPerTick);
+    }
+    return selected;
   }
 
   // -------------------------------------------------------------------------
@@ -213,6 +292,20 @@ export class JobScanner {
     const fromVal = await fromInput.inputValue().catch(() => '?');
     const toVal = await rangeInputs.nth(1).inputValue().catch(() => '?');
     this.logger.debug('date filter set', { fromStr, toStr, fromAccepted: fromVal, toAccepted: toVal });
+
+    // Apply-verification: a value that actually applied leaves the input
+    // non-empty and readable. An empty / unreadable ('?') read-back means the
+    // board rejected or cleared what we typed, so the scan would silently run
+    // against the WRONG Created window (nothing threw). This matters most for the
+    // review pass, whose WIDER window failing to apply would make it scan the
+    // narrow translation window and surface zero aged review jobs. (A snap-back to
+    // a DIFFERENT valid date is not caught here — that needs the board's exact
+    // read-back format, which the debug line above exposes for later tuning.)
+    if (!fromVal || !toVal || fromVal === '?' || toVal === '?') {
+      this.onAlert(
+        `Job board Created filter may not have applied (read back from="${fromVal}", to="${toVal}"; wanted from="${fromStr}", to="${toStr}") — this tick's scan may use the wrong date window`
+      );
+    }
   }
 
   /**

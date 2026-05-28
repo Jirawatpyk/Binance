@@ -19,3 +19,13 @@ export function pendingRole(
   }
   return null;
 }
+
+/**
+ * May this role be assigned to this candidate? A `reviewOnly` candidate was
+ * surfaced only by the decoupled review scan (created beyond the translation
+ * window), so only its reviewer may be assigned — assigning a translator would
+ * defeat the scan.lookbackHours backlog guard. Normal candidates allow any role.
+ */
+export function canAssignRole(reviewOnly: boolean | undefined, role: AssignRole): boolean {
+  return !reviewOnly || role === 'reviewer';
+}

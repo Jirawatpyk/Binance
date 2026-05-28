@@ -20,8 +20,9 @@ import { HealthMonitor } from './core/health-monitor.js';
 import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError } from './core/recovery-utils.js';
 import { TranslatorNotFoundError } from './core/errors.js';
-import { pendingRole } from './assignment/eligibility.js';
+import { pendingRole, canAssignRole } from './assignment/eligibility.js';
 import { classifyOutcome } from './assignment/outcome.js';
+import { isReviewScanSkippable } from './scraper/review-scan-skip.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
 const TRANSLATORS_PATH = process.env.TRANSLATORS_PATH ?? './config/translators.yml';
@@ -162,12 +163,27 @@ async function main(): Promise<void> {
   // Per-language reviewer map (WAITING_REVIEW → reviewer), or undefined when the
   // review feature is off — pendingRole uses it to decide reviewer assignments.
   const reviewers = settings.review?.enabled ? settings.review.reviewers : undefined;
-  let scanner = new JobScanner(page, logger, settings.scan, scanAlert);
+  // Decoupled review scan: a second board pass (wider Created window) that finds
+  // aged WAITING_REVIEW jobs for the configured-reviewer languages only. Skips
+  // jobs we've abandoned or that are still cooling down (isReviewScanSkippable).
+  const reviewScan =
+    reviewers && settings.review
+      ? {
+          languages: (Object.keys(reviewers) as SupportedLanguage[]).filter((k) => reviewers[k]),
+          lookbackHours: settings.review.scanLookbackHours,
+          maxCandidatesPerTick: settings.review.maxCandidatesPerTick,
+          isSkippable: (jobId: string) =>
+            isReviewScanSkippable(state.getProcessedEntry(jobId), Date.now()),
+        }
+      : undefined;
+  let scanner = new JobScanner(page, logger, settings.scan, scanAlert, reviewScan);
   let processor = new JobProcessor(page, logger);
   let assigner = new Assigner(page, logger, settings.assignment.dryRun);
 
   const rebuildPipeline = (p: Page): void => {
-    scanner = new JobScanner(p, logger, settings.scan, scanAlert);
+    // reviewScan is config-derived and stateless (its isSkippable closes over the
+    // long-lived `state`), so it is reused as-is — only the Playwright page is rebuilt.
+    scanner = new JobScanner(p, logger, settings.scan, scanAlert, reviewScan);
     processor = new JobProcessor(p, logger);
     assigner = new Assigner(p, logger, settings.assignment.dryRun);
   };
@@ -265,6 +281,16 @@ async function main(): Promise<void> {
       } else {
         health.resetZeroScans();
       }
+      // Note: there is intentionally NO separate "zero review candidates" alert.
+      // Review work is sporadic — zero review candidates is the normal steady
+      // state once the backlog is caught up, so a consecutive-zero alert would
+      // false-fire constantly. Genuine review-pass breakage already surfaces by
+      // other paths: it shares all its DOM interaction (setStatusFilter/
+      // setLanguageFilter) with the translation pass, so selector drift THROWS
+      // and is caught by the tick handler → recordTickError (and a clean board
+      // that simply returns no rows still trips the zero-scan alert above);
+      // setDateFilter/pagination failures fire their own onAlert. The daily
+      // summary's "Reviews assigned" line adds right-cadence visibility.
       for (const job of candidates) {
         const entry = state.getProcessedEntry(job.id);
         // Skip only jobs we've given up on. Do NOT skip FULL jobs in general: a
@@ -314,6 +340,10 @@ async function main(): Promise<void> {
           for (const lang of detail.targetLanguages) {
             const role = pendingRole(lang, reviewers);
             if (role === null) continue;
+            // Review-scan candidates are surfaced beyond the translation window;
+            // only their reviewer may be assigned (never a translator — see
+            // canAssignRole, unit-tested in eligibility.test.ts).
+            if (!canAssignRole(job.reviewOnly, role)) continue;
 
             // Resolve the assignee + the status that must clear after a successful
             // assign. Translator: word-count rule (RR counter). Reviewer: the
@@ -369,7 +399,11 @@ async function main(): Promise<void> {
             } catch (err) {
               if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery
               failed.push(lang.code);
-              if (role === 'translator') health.recordAssignment(false, lang.code);
+              // Count both translator AND reviewer failures so a repeatedly-failing
+              // reviewer assign is visible in the daily summary's "failed" count
+              // (not only via the eventual ABANDONED alert). recordAssignment(false)
+              // only bumps today.failed — it never touches the success/byLang metrics.
+              health.recordAssignment(false, lang.code);
               logger.error('assignment failed', { jobId: job.id, language: lang.code, role, error: (err as Error).message });
               await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay).catch(() => null);
             }

@@ -62,5 +62,13 @@ review:
   # done). Disabled by default. Only languages listed here get a reviewer; others
   # are skipped. Dry-run gates this exactly like translator assignment.
   enabled: false
+  # A SECOND scan pass finds jobs that reached WAITING_REVIEW after they aged out
+  # of scan.lookbackHours (reviews start days after a job is created). This is its
+  # own Created window, decoupled from the translation window. Default 168h (7d).
+  scanLookbackHours: 168
+  # Separate per-tick cap for review-pass detail opens (newest reviews first —
+  # recently-translated jobs that actually need review), so review work is never
+  # starved by a translation burst. Default 10.
+  maxCandidatesPerTick: 10
   reviewers:
     lo-LA: "LO_T2@eqho.com"

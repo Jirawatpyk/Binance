@@ -72,6 +72,16 @@ describe('buildSheetRows', () => {
     expect(buildSheetRows(items, noExisting(), tabs)).toEqual({});
   });
 
+  it('still emits the mapped language when one item mixes mapped + unmapped languages', () => {
+    // Guards against a `break`-instead-of-`continue` regression on the unmapped skip.
+    const items: AssignmentSummaryItem[] = [
+      { jobId: '700', name: 'Mixed', wordCount: 3, assigned: { 'xx-YY': 'z@eqho.com', 'lo-LA': 'LO_T1@eqho.com' } as Record<string, string> },
+    ];
+    const rows = buildSheetRows(items, noExisting(), tabs);
+    expect(rows['Lao Assign']).toEqual([['700', 'Mixed', '', '3', 'LO_T1@eqho.com']]);
+    expect(rows['Khmer Assign']).toBeUndefined();
+  });
+
   it('returns an empty object for no items', () => {
     expect(buildSheetRows([], noExisting(), tabs)).toEqual({});
   });

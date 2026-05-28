@@ -25,6 +25,7 @@ class SheetsHttpError extends Error {
     message: string
   ) {
     super(message);
+    this.name = 'SheetsHttpError';
   }
 }
 
@@ -154,8 +155,8 @@ export class SheetsAssignmentLogger {
   }
 
   /** Authed Sheets request with a timeout and a uniform error (carrying the HTTP
-   *  status). Throws on non-OK — every caller runs inside a try/catch, so the
-   *  never-throw contract of the public methods is preserved. */
+   *  status). Throws on non-OK — every in-class caller runs inside a try/catch,
+   *  so the never-throw contract of the public methods is preserved. */
   private async request(url: string, errLabel: string, init?: { method?: string; jsonBody?: unknown }): Promise<Response> {
     const headers: Record<string, string> = { Authorization: `Bearer ${await this.bearer()}` };
     if (init?.jsonBody !== undefined) headers['Content-Type'] = 'application/json';

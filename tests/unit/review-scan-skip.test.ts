@@ -32,4 +32,14 @@ describe('isReviewScanSkippable', () => {
   it('does not skip when recheckAfter is unparseable (fail-open toward doing work)', () => {
     expect(isReviewScanSkippable(entry({ recheckAfter: 'not-a-date' }), now)).toBe(false);
   });
+
+  it('does not skip a PARTIAL job with no recheckAfter (re-checked live next tick)', () => {
+    expect(isReviewScanSkippable(entry({ status: 'PARTIAL' }), now)).toBe(false);
+  });
+
+  it('skips an ABANDONED job even with a future recheckAfter (ABANDONED takes precedence)', () => {
+    expect(
+      isReviewScanSkippable(entry({ status: 'ABANDONED', recheckAfter: '2026-05-28T13:00:00.000Z' }), now)
+    ).toBe(true);
+  });
 });

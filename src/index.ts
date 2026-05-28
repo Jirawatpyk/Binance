@@ -20,7 +20,7 @@ import { HealthMonitor } from './core/health-monitor.js';
 import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError } from './core/recovery-utils.js';
 import { TranslatorNotFoundError } from './core/errors.js';
-import { pendingRole } from './assignment/eligibility.js';
+import { pendingRole, canAssignRole } from './assignment/eligibility.js';
 import { classifyOutcome } from './assignment/outcome.js';
 import { isReviewScanSkippable } from './scraper/review-scan-skip.js';
 
@@ -281,6 +281,15 @@ async function main(): Promise<void> {
       } else {
         health.resetZeroScans();
       }
+      // Note: there is intentionally NO separate "zero review candidates" alert.
+      // Review work is sporadic — zero review candidates is the normal steady
+      // state once the backlog is caught up, so a consecutive-zero alert would
+      // false-fire constantly. Genuine review-pass breakage already surfaces:
+      // it shares all its DOM interaction (setStatusFilter/setLanguageFilter)
+      // with the translation pass (so board-wide drift trips the zero-scan alert
+      // above), setDateFilter/pagination failures fire their own onAlert, and a
+      // thrown pass is caught by the tick handler → recordTickError. The daily
+      // summary's "Reviews assigned" line gives the right-cadence visibility.
       for (const job of candidates) {
         const entry = state.getProcessedEntry(job.id);
         // Skip only jobs we've given up on. Do NOT skip FULL jobs in general: a
@@ -330,10 +339,10 @@ async function main(): Promise<void> {
           for (const lang of detail.targetLanguages) {
             const role = pendingRole(lang, reviewers);
             if (role === null) continue;
-            // Review-scan candidates are surfaced beyond the 24h translation
-            // window; only assign their reviewer, never a translator (that would
-            // defeat the scan.lookbackHours backlog guard).
-            if (job.reviewOnly && role !== 'reviewer') continue;
+            // Review-scan candidates are surfaced beyond the translation window;
+            // only their reviewer may be assigned (never a translator — see
+            // canAssignRole, unit-tested in eligibility.test.ts).
+            if (!canAssignRole(job.reviewOnly, role)) continue;
 
             // Resolve the assignee + the status that must clear after a successful
             // assign. Translator: word-count rule (RR counter). Reviewer: the

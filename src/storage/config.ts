@@ -87,10 +87,18 @@ const settingsSchema = z.object({
         .strict(),
     })
     .optional(),
-}).refine(
-  (s) => s.scan.processedJobRetainHours >= s.scan.lookbackHours,
-  { message: 'scan.processedJobRetainHours must be >= scan.lookbackHours' }
-);
+})
+  .refine(
+    (s) => s.scan.processedJobRetainHours >= s.scan.lookbackHours,
+    { message: 'scan.processedJobRetainHours must be >= scan.lookbackHours' }
+  )
+  .refine(
+    // The review pass exists to catch jobs that aged OUT of the translation
+    // window, so its Created window must be wider — a narrower one would make the
+    // pass redundant (or miss the very jobs it targets) silently.
+    (s) => !s.review || s.review.scanLookbackHours >= s.scan.lookbackHours,
+    { message: 'review.scanLookbackHours must be >= scan.lookbackHours (the review window must be wider than the translation window)' }
+  );
 
 const ruleSchema = z.object({
   maxWords: z.number().positive().nullable(),

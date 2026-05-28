@@ -284,12 +284,13 @@ async function main(): Promise<void> {
       // Note: there is intentionally NO separate "zero review candidates" alert.
       // Review work is sporadic — zero review candidates is the normal steady
       // state once the backlog is caught up, so a consecutive-zero alert would
-      // false-fire constantly. Genuine review-pass breakage already surfaces:
-      // it shares all its DOM interaction (setStatusFilter/setLanguageFilter)
-      // with the translation pass (so board-wide drift trips the zero-scan alert
-      // above), setDateFilter/pagination failures fire their own onAlert, and a
-      // thrown pass is caught by the tick handler → recordTickError. The daily
-      // summary's "Reviews assigned" line gives the right-cadence visibility.
+      // false-fire constantly. Genuine review-pass breakage already surfaces by
+      // other paths: it shares all its DOM interaction (setStatusFilter/
+      // setLanguageFilter) with the translation pass, so selector drift THROWS
+      // and is caught by the tick handler → recordTickError (and a clean board
+      // that simply returns no rows still trips the zero-scan alert above);
+      // setDateFilter/pagination failures fire their own onAlert. The daily
+      // summary's "Reviews assigned" line adds right-cadence visibility.
       for (const job of candidates) {
         const entry = state.getProcessedEntry(job.id);
         // Skip only jobs we've given up on. Do NOT skip FULL jobs in general: a

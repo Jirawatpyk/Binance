@@ -11,10 +11,11 @@ export function formatDueCell(d?: Date | null): string {
 }
 
 /**
- * Build the rows to append per tab (columns C..G), routing each assigned
- * language to its mapped tab and skipping any Job ID already present in that
- * tab. Pure: existing IDs are passed in (no I/O). `existingIdsByTab` is mutated
- * to also dedup within this same batch.
+ * Build the value rows per tab — each a 5-element array [Job ID, File name, Due,
+ * WC, translator] — routing each assigned language to its mapped tab and
+ * skipping any Job ID already present in that tab. Column placement (C..G) is
+ * owned by the caller's write range, not here. Pure: existing IDs are passed in
+ * (no I/O). `existingIdsByTab` is mutated to also dedup within this same batch.
  */
 export function buildSheetRows(
   items: AssignmentSummaryItem[],

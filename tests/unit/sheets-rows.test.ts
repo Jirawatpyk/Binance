@@ -17,6 +17,9 @@ describe('formatDueCell', () => {
     expect(formatDueCell(undefined)).toBe('');
     expect(formatDueCell(new Date('nope'))).toBe('');
   });
+  it('zero-pads single-digit month/day/hour/minute', () => {
+    expect(formatDueCell(new Date('2026-01-09T03:07:00Z'))).toBe('2026-01-09 03:07 UTC');
+  });
 });
 
 describe('buildSheetRows', () => {
@@ -50,6 +53,23 @@ describe('buildSheetRows', () => {
     ];
     const rows = buildSheetRows(items, noExisting(), tabs);
     expect(rows['Khmer Assign']).toEqual([['300', 'No due', '', '5', 'kh_t2@eqho.com']]);
+  });
+
+  it('dedups the same Job ID appearing twice within one batch', () => {
+    const items: AssignmentSummaryItem[] = [
+      { jobId: '500', name: 'First', wordCount: 1, assigned: { 'lo-LA': 'LO_T1@eqho.com' } },
+      { jobId: '500', name: 'Again', wordCount: 9, assigned: { 'lo-LA': 'LO_T1@eqho.com' } },
+    ];
+    const rows = buildSheetRows(items, noExisting(), tabs);
+    expect(rows['Lao Assign']).toHaveLength(1);
+    expect(rows['Lao Assign']?.[0][0]).toBe('500');
+  });
+
+  it('skips an assigned language that has no tab mapping', () => {
+    const items: AssignmentSummaryItem[] = [
+      { jobId: '600', name: 'Unmapped', wordCount: 1, assigned: { 'xx-YY': 'z@eqho.com' } as Record<string, string> },
+    ];
+    expect(buildSheetRows(items, noExisting(), tabs)).toEqual({});
   });
 
   it('returns an empty object for no items', () => {

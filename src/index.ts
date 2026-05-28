@@ -323,7 +323,7 @@ async function main(): Promise<void> {
 
             try {
               await retry(
-                () => assigner.assign(lang.code, assignee, lang.rowIndex, expectCleared),
+                () => assigner.assign(lang.code, assignee, lang.rowIndex, expectCleared, role),
                 { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
                 (err, attempt) => {
                   if (

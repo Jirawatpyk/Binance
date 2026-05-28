@@ -31,9 +31,10 @@ export class Assigner {
 
   async assign(
     language: SupportedLanguage,
-    translatorEmail: string,
+    assignee: string,
     rowIndex: number,
-    expectClearedStatus: string = 'WAITING_TRANSLATION'
+    expectClearedStatus: string = 'WAITING_TRANSLATION',
+    role: 'translator' | 'reviewer' = 'translator'
   ): Promise<void> {
     // Re-select the Waiting tab in case a prior assignment switched tabs.
     await this.selectWaitingTab(true);
@@ -46,7 +47,7 @@ export class Assigner {
     }
 
     if (this.dryRun) {
-      this.logger.info('[DRY-RUN] would click Assign', { language, translatorEmail, rowIndex });
+      this.logger.info('[DRY-RUN] would click Assign', { language, role, assignee, rowIndex });
       return;
     }
 
@@ -59,21 +60,21 @@ export class Assigner {
     // Scoped to the modal so other Ant lists on the page can't satisfy this selector prematurely.
     await modal.locator('li.ant-list-item').first().waitFor({ state: 'visible', timeout: 20_000 });
 
-    // Modal renders the eligible translators as an Ant Design List
-    // (ul.ant-list-items > li.ant-list-item), each item containing the
-    // translator email and its own "Assign" button.
-    const translatorAssignBtn = modal
+    // Modal renders the eligible users (translators or reviewers) as an Ant
+    // Design List (ul.ant-list-items > li.ant-list-item), each item containing
+    // the user's email and its own "Assign" button.
+    const assigneeBtn = modal
       .locator('li.ant-list-item')
-      .filter({ hasText: translatorEmail })
+      .filter({ hasText: assignee })
       .locator('button:has-text("Assign")')
       .first();
-    if (!(await translatorAssignBtn.isVisible({ timeout: 5_000 }).catch(() => false))) {
-      throw new TranslatorNotFoundError(`Translator ${translatorEmail} not in popup`, {
+    if (!(await assigneeBtn.isVisible({ timeout: 5_000 }).catch(() => false))) {
+      throw new TranslatorNotFoundError(`${role} ${assignee} not in popup`, {
         language,
       });
     }
 
-    await translatorAssignBtn.click();
+    await assigneeBtn.click();
     // The Ant success toast selector is unverified against a real assign, so it
     // is only a fast-path hint — never the sole proof of success.
     const sawToast = await this.page
@@ -88,7 +89,8 @@ export class Assigner {
       // Modal still open ⇒ the assign did not go through (error stayed in the dialog).
       throw new AssignmentFailedError('modal still open after assign', {
         language,
-        translatorEmail,
+        role,
+        assignee,
         rowIndex,
       });
     }
@@ -117,14 +119,16 @@ export class Assigner {
     if (stillWaiting > 0) {
       throw new AssignmentFailedError(`row still ${expectClearedStatus} after assign — not confirmed`, {
         language,
-        translatorEmail,
+        role,
+        assignee,
         rowIndex,
       });
     }
 
     this.logger.info('assignment submitted', {
       language,
-      translatorEmail,
+      role,
+      assignee,
       confirmedBy: sawToast ? 'toast' : 'row-cleared',
     });
   }

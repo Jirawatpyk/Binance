@@ -39,9 +39,9 @@ describe('selectReviewCandidates', () => {
     expect(out.map((j) => j.id)).toEqual(['100']);
   });
 
-  it('returns oldest first (ascending id) regardless of scan order — anti-starvation', () => {
-    const out = selectReviewCandidates([job('300'), job('100'), job('200')], new Set(), never);
-    expect(out.map((j) => j.id)).toEqual(['100', '200', '300']);
+  it('returns newest first (descending id) regardless of scan order — recently-translated jobs win the cap', () => {
+    const out = selectReviewCandidates([job('100'), job('300'), job('200')], new Set(), never);
+    expect(out.map((j) => j.id)).toEqual(['300', '200', '100']);
   });
 
   it('does not mutate the input jobs (reviewOnly only on the returned copies)', () => {

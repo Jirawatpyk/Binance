@@ -150,8 +150,9 @@ export class JobScanner {
    * with a configured reviewer. Results are tagged reviewOnly so the tick loop
    * assigns a reviewer (never a translator) to them. Returns [] when no
    * reviewScan was provided. Deduped against the translation candidates and
-   * filtered by the state-backed skip predicate; oldest (lowest id) first so the
-   * longest-waiting review jobs win the per-tick cap.
+   * filtered by the state-backed skip predicate; newest (highest id) first so the
+   * recently-translated jobs that actually need review win the per-tick cap ahead
+   * of aged backlog that merely shares the lo-LA board filter.
    */
   private async scanForReview(translationMap: Map<string, Job>): Promise<Job[]> {
     const rs = this.reviewScan;

@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "dotenv": "^16.4.7",
+    "google-auth-library": "^10.6.2",
     "playwright": "^1.49.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

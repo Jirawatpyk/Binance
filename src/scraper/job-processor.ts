@@ -67,14 +67,14 @@ export class JobProcessor {
       const translatorText = (await cells.nth(2).textContent() ?? '').trim();
       const reviewerText = (await cells.nth(3).textContent() ?? '').trim();
       const statusText = (await cells.nth(5).textContent() ?? '').trim();
+      // An assigned translator/reviewer is always an email; treat a cell as
+      // "set" only when it contains '@', so an empty-state placeholder
+      // ('-', em-dash, NBSP, etc.) reliably reads as null rather than silently
+      // blocking an assignment for that role.
       out.push({
         code,
         status: statusText || 'UNKNOWN',
-        translator: translatorText === '-' || translatorText === '' ? null : translatorText,
-        // An assigned reviewer/translator is always an email; treat the cell as
-        // "set" only when it contains '@', so an empty-state placeholder
-        // ('-', em-dash, NBSP, etc.) reliably reads as null rather than
-        // silently blocking a reviewer assignment.
+        translator: translatorText.includes('@') ? translatorText : null,
         reviewer: reviewerText.includes('@') ? reviewerText : null,
         rowIndex: i,
       });

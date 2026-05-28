@@ -22,6 +22,7 @@ import { isBrowserDeadError } from './core/recovery-utils.js';
 import { TranslatorNotFoundError } from './core/errors.js';
 import { pendingRole } from './assignment/eligibility.js';
 import { classifyOutcome } from './assignment/outcome.js';
+import { isReviewScanSkippable } from './scraper/review-scan-skip.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
 const TRANSLATORS_PATH = process.env.TRANSLATORS_PATH ?? './config/translators.yml';
@@ -162,12 +163,25 @@ async function main(): Promise<void> {
   // Per-language reviewer map (WAITING_REVIEW → reviewer), or undefined when the
   // review feature is off — pendingRole uses it to decide reviewer assignments.
   const reviewers = settings.review?.enabled ? settings.review.reviewers : undefined;
-  let scanner = new JobScanner(page, logger, settings.scan, scanAlert);
+  // Decoupled review scan: a second board pass (wider Created window) that finds
+  // aged WAITING_REVIEW jobs for the configured-reviewer languages only. Skips
+  // jobs we've abandoned or that are still cooling down (isReviewScanSkippable).
+  const reviewScan =
+    reviewers && settings.review
+      ? {
+          languages: (Object.keys(reviewers) as SupportedLanguage[]).filter((k) => reviewers[k]),
+          lookbackHours: settings.review.scanLookbackHours,
+          maxCandidatesPerTick: settings.review.maxCandidatesPerTick,
+          isSkippable: (jobId: string) =>
+            isReviewScanSkippable(state.getProcessedEntry(jobId), Date.now()),
+        }
+      : undefined;
+  let scanner = new JobScanner(page, logger, settings.scan, scanAlert, reviewScan);
   let processor = new JobProcessor(page, logger);
   let assigner = new Assigner(page, logger, settings.assignment.dryRun);
 
   const rebuildPipeline = (p: Page): void => {
-    scanner = new JobScanner(p, logger, settings.scan, scanAlert);
+    scanner = new JobScanner(p, logger, settings.scan, scanAlert, reviewScan);
     processor = new JobProcessor(p, logger);
     assigner = new Assigner(p, logger, settings.assignment.dryRun);
   };
@@ -314,6 +328,10 @@ async function main(): Promise<void> {
           for (const lang of detail.targetLanguages) {
             const role = pendingRole(lang, reviewers);
             if (role === null) continue;
+            // Review-scan candidates are surfaced beyond the 24h translation
+            // window; only assign their reviewer, never a translator (that would
+            // defeat the scan.lookbackHours backlog guard).
+            if (job.reviewOnly && role !== 'reviewer') continue;
 
             // Resolve the assignee + the status that must clear after a successful
             // assign. Translator: word-count rule (RR counter). Reviewer: the

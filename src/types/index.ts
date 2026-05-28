@@ -15,6 +15,7 @@ export interface TargetLanguage {
   code: SupportedLanguage;
   status: string;
   translator: string | null;
+  reviewer: string | null;
   rowIndex: number;
 }
 

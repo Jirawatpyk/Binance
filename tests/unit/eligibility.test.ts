@@ -3,7 +3,7 @@ import { isLanguageAssignable } from '../../src/assignment/eligibility.js';
 import type { TargetLanguage } from '../../src/types/index.js';
 
 function row(partial: Partial<TargetLanguage>): TargetLanguage {
-  return { code: 'lo-LA', status: 'WAITING_TRANSLATION', translator: null, rowIndex: 0, ...partial };
+  return { code: 'lo-LA', status: 'WAITING_TRANSLATION', translator: null, reviewer: null, rowIndex: 0, ...partial };
 }
 
 describe('isLanguageAssignable', () => {

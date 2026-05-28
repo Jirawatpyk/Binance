@@ -65,11 +65,13 @@ export class JobProcessor {
       const code = this.detectCode(langText);
       if (!code) continue;
       const translatorText = (await cells.nth(2).textContent() ?? '').trim();
+      const reviewerText = (await cells.nth(3).textContent() ?? '').trim();
       const statusText = (await cells.nth(5).textContent() ?? '').trim();
       out.push({
         code,
         status: statusText || 'UNKNOWN',
         translator: translatorText === '-' || translatorText === '' ? null : translatorText,
+        reviewer: reviewerText === '-' || reviewerText === '' ? null : reviewerText,
         rowIndex: i,
       });
     }

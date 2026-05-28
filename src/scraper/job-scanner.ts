@@ -1,5 +1,5 @@
 import type { Page } from 'playwright';
-import { type Job, SUPPORTED_LANGUAGES } from '../types/index.js';
+import { type Job, type SupportedLanguage, SUPPORTED_LANGUAGES } from '../types/index.js';
 import type winston from 'winston';
 import { parseCreatedUtc, formatBoardDate } from './date-utils.js';
 
@@ -19,6 +19,18 @@ const JOB_BOARD_URL = 'https://www.translationtms.com/job-board';
 export interface ScanConfig {
   lookbackHours: number;
   maxCandidatesPerTick: number;
+}
+
+/**
+ * Optional decoupled review-scan inputs. When provided, scan() runs a second
+ * pass (wider Created window) for these languages and tags the results
+ * reviewOnly. When omitted, scan() behaves exactly as before (translation only).
+ */
+export interface ReviewScanOptions {
+  languages: SupportedLanguage[];          // languages that have a configured reviewer
+  lookbackHours: number;                   // review.scanLookbackHours (e.g. 168)
+  maxCandidatesPerTick: number;            // review.maxCandidatesPerTick (e.g. 10)
+  isSkippable: (jobId: string) => boolean; // state-backed: ABANDONED or still cooling down
 }
 
 /** Internal row shape before Job transformation (includes created for client-side filter) */
@@ -42,6 +54,8 @@ export class JobScanner {
     // Optional operator alert for silent-degradation cases (date filter failed
     // to apply, pagination cap hit). Fire-and-forget; must never throw.
     private onAlert: (msg: string) => void = () => {},
+    // Optional decoupled review scan. Undefined → no second pass (legacy behavior).
+    private reviewScan?: ReviewScanOptions,
   ) {}
 
   // -------------------------------------------------------------------------
@@ -113,11 +127,78 @@ export class JobScanner {
       candidates = candidates.slice(0, this.scanConfig.maxCandidatesPerTick);
     }
 
+    // Decoupled review pass: surface aged WAITING_REVIEW jobs the translation
+    // window hides. Deduped against ALL translation candidates found this tick
+    // (jobMap, including any truncated above) so a job is never both.
+    const reviewCandidates = await this.scanForReview(jobMap);
+
+    const all = [...candidates, ...reviewCandidates];
     this.logger.info('job scan complete', {
       candidates: candidates.length,
-      candidateIds: candidates.map((j) => j.id),
+      reviewCandidates: reviewCandidates.length,
+      candidateIds: all.map((j) => j.id),
     });
-    return candidates;
+    return all;
+  }
+
+  /**
+   * Second scan pass for jobs that need a REVIEWER. Uses a wider Created window
+   * (reviewScan.lookbackHours) than the translation pass so jobs that reached
+   * WAITING_REVIEW days after creation are still found, but only for languages
+   * with a configured reviewer. Results are tagged reviewOnly so the tick loop
+   * assigns a reviewer (never a translator) to them. Returns [] when no
+   * reviewScan was provided. Deduped against the translation candidates and
+   * filtered by the state-backed skip predicate; oldest (lowest id) first so the
+   * longest-waiting review jobs win the per-tick cap.
+   */
+  private async scanForReview(translationMap: Map<string, Job>): Promise<Job[]> {
+    const rs = this.reviewScan;
+    if (!rs || rs.languages.length === 0) return [];
+
+    const reviewTo = new Date();
+    const reviewFrom = new Date(Date.now() - rs.lookbackHours * 3600_000);
+    this.logger.info('review scan window', {
+      lookbackHours: rs.lookbackHours,
+      createdFrom: reviewFrom.toISOString(),
+      createdTo: reviewTo.toISOString(),
+      languages: rs.languages,
+    });
+
+    // Re-set the board Created filter to the wider review window. Same ±1 day
+    // padding the translation pass uses (the board filter is date-only / local
+    // tz); the exact UTC cutoff is still enforced client-side in collectAllPages.
+    const DAY_MS = 24 * 3600_000;
+    await this.setDateFilter(
+      new Date(reviewFrom.getTime() - DAY_MS),
+      new Date(reviewTo.getTime() + DAY_MS)
+    );
+
+    const reviewList: Job[] = [];
+    const seen = new Set<string>();
+    for (const lang of rs.languages) {
+      this.logger.info('scanning review language', { lang });
+      const jobs = await this.scanForLanguage(lang, reviewFrom);
+      for (const job of jobs) {
+        if (translationMap.has(job.id)) continue; // already a translation candidate
+        if (seen.has(job.id)) continue;           // dedup across review languages
+        if (rs.isSkippable(job.id)) continue;     // ABANDONED / still cooling down
+        seen.add(job.id);
+        reviewList.push({ ...job, reviewOnly: true });
+      }
+      this.logger.info('review language scan complete', { lang, found: jobs.length });
+    }
+
+    // Oldest first so the longest-waiting review jobs are processed before newer
+    // ones when the cap bites (lower id == older job).
+    reviewList.sort((a, b) => Number(a.id) - Number(b.id));
+    if (reviewList.length > rs.maxCandidatesPerTick) {
+      this.logger.warn('review candidate count exceeds cap; truncating', {
+        found: reviewList.length,
+        cap: rs.maxCandidatesPerTick,
+      });
+      return reviewList.slice(0, rs.maxCandidatesPerTick);
+    }
+    return reviewList;
   }
 
   // -------------------------------------------------------------------------

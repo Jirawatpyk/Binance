@@ -13,6 +13,7 @@ import { ProcessLock } from './core/lock.js';
 import { captureScreenshot, cleanOldScreenshots } from './core/screenshot.js';
 import type { Page } from 'playwright';
 import { GoogleChatNotifier, type AssignmentSummaryItem } from './notifications/google-chat.js';
+import { SheetsAssignmentLogger } from './integrations/google-sheets.js';
 import type { SupportedLanguage, Settings, TranslatorsConfig } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
@@ -70,6 +71,11 @@ async function main(): Promise<void> {
   // separate diagnostics space so they don't clutter the production channel.
   // Falls back to log-only when GOOGLE_CHAT_TEST_WEBHOOK_URL is unset.
   const diagNotifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL, logger);
+  // Best-effort mirror of real assignments into Google Sheets. Failures alert
+  // via the production notifier but never block a tick.
+  const sheetsLogger = new SheetsAssignmentLogger(settings.sheets, logger, (msg) => {
+    void notifier.notify(msg, 'error');
+  });
 
   if (!process.env.GOOGLE_CHAT_WEBHOOK_URL) {
     logger.warn('GOOGLE_CHAT_WEBHOOK_URL not set — Google Chat notifications are disabled');
@@ -110,6 +116,8 @@ async function main(): Promise<void> {
       )
       .catch(() => {});
   }
+
+  await sheetsLogger.init();
 
   let lastBrowserStart = Date.now();
   // Warn once when the session token drops under this many minutes to expiry;
@@ -518,6 +526,8 @@ async function main(): Promise<void> {
     // sent even if the tick later threw (browser crash mid-loop) so assignments
     // are never silently dropped.
     await notifier.notifyAssignments(assignedThisTick);
+    // Mirror the same real assignments into Google Sheets (best-effort).
+    await sheetsLogger.appendAssignments(assignedThisTick);
 
     try {
       await health.save();

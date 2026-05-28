@@ -116,7 +116,7 @@ async function main(): Promise<void> {
       .filter(Boolean)
       .join(' + ');
     logger.error('recovered from corrupt persistence file(s) — reset to empty', { files });
-    await notifier
+    await diagNotifier
       .notify(
         `Recovered from corrupt ${files} (reset to empty; a .corrupt.* backup was kept). Round-robin counters / processed-job history were lost — the bot may re-assign jobs it already handled this cycle.`,
         'error'
@@ -459,7 +459,7 @@ async function main(): Promise<void> {
       // so surface it (gated) rather than no-op.
       if (expMs === null) {
         if (!expiryReadFailedAlerted) {
-          await notifier
+          await diagNotifier
             .notify(
               'Could not read TMS session token expiry — the pre-expiry warning is not functioning. Check whether the TMS app changed its auth_token storage.',
               'warn'
@@ -485,7 +485,7 @@ async function main(): Promise<void> {
               consecutiveSaveFailures,
             });
             if (consecutiveSaveFailures === SESSION_SAVE_FAILURE_ALERT_THRESHOLD) {
-              await notifier
+              await diagNotifier
                 .notify(
                   `Failed to persist the TMS session ${consecutiveSaveFailures}× in a row (cookies.json may be locked or the disk full). On restart the bot will load a stale token and likely pause for re-auth.`,
                   'error'
@@ -497,7 +497,7 @@ async function main(): Promise<void> {
 
         const minsLeft = Math.max(0, Math.round((expMs - Date.now()) / 60_000));
         if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted) {
-          await notifier
+          await diagNotifier
             .notify(
               `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,
               'warn'
@@ -551,7 +551,7 @@ async function main(): Promise<void> {
           consecutiveStateSaveFailures,
         });
         if (consecutiveStateSaveFailures === STATE_SAVE_FAILURE_ALERT_THRESHOLD) {
-          await notifier
+          await diagNotifier
             .notify(
               `state.json failed to save ${consecutiveStateSaveFailures}× in a row — round-robin counters and processed-job history are not persisting. The bot may re-assign jobs and skew translator load until this is fixed (check disk space / file locks).`,
               'error'
@@ -585,7 +585,7 @@ async function main(): Promise<void> {
       });
       // Hard-exit safety net: fires even if notify hangs in a wedged event loop.
       setTimeout(() => process.exit(1), 6_000).unref();
-      void notifier
+      void diagNotifier
         .notify('Bot tick hung — exiting for auto-restart', 'error')
         .catch(() => {})
         .finally(() => process.exit(1));

@@ -2,7 +2,7 @@ import 'dotenv/config';
 import { loadSettings, loadTranslators } from './storage/config.js';
 import { createLogger } from './core/logger.js';
 import { StateStore } from './storage/state.js';
-import { AssignmentEngine } from './assignment/engine.js';
+import { AssignmentEngine, type PickResult } from './assignment/engine.js';
 import { AuthSession } from './auth/session.js';
 import { JobScanner } from './scraper/job-scanner.js';
 import { JobProcessor } from './scraper/job-processor.js';
@@ -12,7 +12,7 @@ import { retry } from './core/retry.js';
 import { ProcessLock } from './core/lock.js';
 import { captureScreenshot, cleanOldScreenshots } from './core/screenshot.js';
 import type { Page } from 'playwright';
-import { GoogleChatNotifier, type AssignmentSummaryItem } from './notifications/google-chat.js';
+import { GoogleChatNotifier, type AssignmentSummaryItem, type ReviewSummaryItem } from './notifications/google-chat.js';
 import { SheetsAssignmentLogger } from './integrations/google-sheets.js';
 import type { SupportedLanguage, Settings, TranslatorsConfig } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
@@ -20,7 +20,7 @@ import { HealthMonitor } from './core/health-monitor.js';
 import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError } from './core/recovery-utils.js';
 import { TranslatorNotFoundError } from './core/errors.js';
-import { isLanguageAssignable } from './assignment/eligibility.js';
+import { pendingRole } from './assignment/eligibility.js';
 import { classifyOutcome } from './assignment/outcome.js';
 
 const SETTINGS_PATH = process.env.SETTINGS_PATH ?? './config/settings.yml';
@@ -152,6 +152,9 @@ async function main(): Promise<void> {
     void notifier.notify(msg, 'warn');
   };
   const engine = new AssignmentEngine(translators, state);
+  // Per-language reviewer map (WAITING_REVIEW → reviewer), or undefined when the
+  // review feature is off — pendingRole uses it to decide reviewer assignments.
+  const reviewers = settings.review?.enabled ? settings.review.reviewers : undefined;
   let scanner = new JobScanner(page, logger, settings.scan, scanAlert);
   let processor = new JobProcessor(page, logger);
   let assigner = new Assigner(page, logger, settings.assignment.dryRun);
@@ -234,6 +237,7 @@ async function main(): Promise<void> {
     }
 
     const assignedThisTick: AssignmentSummaryItem[] = [];
+    const reviewedThisTick: ReviewSummaryItem[] = [];
     try {
       health.recordPoll(); // a real board poll (we're past the auth-pause gate)
       const candidates = await scanner.scan();
@@ -261,7 +265,7 @@ async function main(): Promise<void> {
         // the board only re-surfaces a job (Available to Claim + language filter)
         // when it still has claimable work. Re-open it and let the live
         // Waiting-tab read decide which languages remain — an already-assigned
-        // row is no longer WAITING_TRANSLATION, so isLanguageAssignable skips it
+        // row is no longer WAITING_TRANSLATION, so pendingRole skips it
         // (no double-assign). Exception: a FULL job that recently re-opened to
         // nothing assignable (e.g. rows stuck in WAITING_REVIEW, which the board
         // still lists as claimable) is on cooldown to avoid re-opening it every
@@ -298,13 +302,28 @@ async function main(): Promise<void> {
           logger.info('processing job', { jobId: job.id, name: job.name });
           const detail = await processor.open(job.detailUrl, job.id);
           const assigned: Partial<Record<SupportedLanguage, string>> = {};
+          const reviewed: Partial<Record<SupportedLanguage, string>> = {};
           const failed: SupportedLanguage[] = [];
           for (const lang of detail.targetLanguages) {
-            if (!isLanguageAssignable(lang)) continue; // unassigned AND status === WAITING_TRANSLATION (exact)
+            const role = pendingRole(lang, reviewers);
+            if (role === null) continue;
+
+            // Resolve the assignee + the status that must clear after a successful
+            // assign. Translator: word-count rule (RR counter). Reviewer: the
+            // configured fixed reviewer for the language.
+            let assignee: string;
+            let pick: PickResult | null = null;
+            if (role === 'translator') {
+              pick = engine.pick(lang.code, detail.wordCount);
+              assignee = pick.translator;
+            } else {
+              assignee = reviewers![lang.code]!; // pendingRole guarantees this exists
+            }
+            const expectCleared = role === 'translator' ? 'WAITING_TRANSLATION' : 'WAITING_REVIEW';
+
             try {
-              const pick = engine.pick(lang.code, detail.wordCount);
               await retry(
-                () => assigner.assign(lang.code, pick.translator, lang.rowIndex),
+                () => assigner.assign(lang.code, assignee, lang.rowIndex, expectCleared),
                 { maxAttempts: settings.assignment.maxRetries + 1, baseDelayMs: settings.assignment.retryDelayMs },
                 (err, attempt) => {
                   if (
@@ -314,31 +333,32 @@ async function main(): Promise<void> {
                   ) {
                     throw err; // deterministic / unrecoverable — don't waste retries
                   }
-                  logger.warn('assign attempt failed', { attempt, language: lang.code, error: (err as Error).message });
+                  logger.warn('assign attempt failed', { attempt, language: lang.code, role, error: (err as Error).message });
                 }
               );
-              assigned[lang.code] = pick.translator;
+              if (role === 'translator') assigned[lang.code] = assignee;
+              else reviewed[lang.code] = assignee;
               if (settings.assignment.dryRun) {
                 logger.info('[DRY-RUN] would assign (not counted in metrics)', {
                   jobId: job.id,
                   name: job.name,
                   language: lang.code,
-                  translator: pick.translator,
+                  role,
+                  assignee,
                 });
               } else {
                 // Real assignment only — dry-run must not affect health metrics,
                 // round-robin counters, or notifications.
                 health.recordAssignment(true, lang.code);
-                if (pick.useRoundRobin && pick.rrKey) {
-                  state.incrementRR(pick.rrKey);
+                if (role === 'translator' && pick!.useRoundRobin && pick!.rrKey) {
+                  state.incrementRR(pick!.rrKey);
                 }
-                // Reported once per tick as a single summary card (see after the loop).
               }
             } catch (err) {
               if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery
               failed.push(lang.code);
               health.recordAssignment(false, lang.code);
-              logger.error('assignment failed', { jobId: job.id, language: lang.code, error: (err as Error).message });
+              logger.error('assignment failed', { jobId: job.id, language: lang.code, role, error: (err as Error).message });
               await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay).catch(() => null);
             }
           }
@@ -352,12 +372,19 @@ async function main(): Promise<void> {
               dueDate: job.dueDate,
             });
           }
+          if (!settings.assignment.dryRun && Object.keys(reviewed).length > 0) {
+            reviewedThisTick.push({
+              jobId: job.id,
+              name: job.name,
+              reviewed: reviewed as Record<string, string>,
+            });
+          }
           // Dry-run is preview-only: never persist processed-job state, otherwise
           // dry-run would mark jobs FULL and the eventual live run would skip them.
           if (!settings.assignment.dryRun) {
             // Pure decision (unit-tested in outcome.test.ts); side effects below.
             const outcome = classifyOutcome({
-              assignedCount: Object.keys(assigned).length,
+              assignedCount: Object.keys(assigned).length + Object.keys(reviewed).length,
               failedCount: failed.length,
               targetLanguageCount: detail.targetLanguages.length,
               prevStatus: entry?.status,
@@ -528,6 +555,8 @@ async function main(): Promise<void> {
     await notifier.notifyAssignments(assignedThisTick);
     // Mirror the same real assignments into Google Sheets (best-effort).
     await sheetsLogger.appendAssignments(assignedThisTick);
+    // Reviewer assignments notify Chat only — never the Sheet.
+    await notifier.notifyReviews(reviewedThisTick);
 
     try {
       await health.save();

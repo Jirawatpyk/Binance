@@ -29,7 +29,12 @@ export class Assigner {
     }
   }
 
-  async assign(language: SupportedLanguage, translatorEmail: string, rowIndex: number): Promise<void> {
+  async assign(
+    language: SupportedLanguage,
+    translatorEmail: string,
+    rowIndex: number,
+    expectClearedStatus: string = 'WAITING_TRANSLATION'
+  ): Promise<void> {
     // Re-select the Waiting tab in case a prior assignment switched tabs.
     await this.selectWaitingTab(true);
 
@@ -97,7 +102,7 @@ export class Assigner {
       this.page
         .locator('table tbody tr')
         .filter({ hasText: language })
-        .filter({ hasText: 'WAITING_TRANSLATION' })
+        .filter({ hasText: expectClearedStatus })
         .count()
         .catch(() => 0);
     // Poll briefly: the Waiting list can take a moment to drop the assigned row.
@@ -110,7 +115,7 @@ export class Assigner {
       stillWaiting = await stillWaitingRow();
     }
     if (stillWaiting > 0) {
-      throw new AssignmentFailedError('row still WAITING_TRANSLATION after assign — not confirmed', {
+      throw new AssignmentFailedError(`row still ${expectClearedStatus} after assign — not confirmed`, {
         language,
         translatorEmail,
         rowIndex,

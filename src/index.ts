@@ -39,9 +39,9 @@ async function main(): Promise<void> {
     // silent — alert via a bootstrap notifier, then rethrow to exit.
     const msg = (err as Error).message;
     console.error('FATAL: config load failed —', msg);
-    if (process.env.GOOGLE_CHAT_WEBHOOK_URL) {
+    if (process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL) {
       const bootLogger = createLogger({ level: 'error', logsDir: './logs', rotateDays: 1 });
-      await new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, bootLogger)
+      await new GoogleChatNotifier(process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL, bootLogger)
         .notify(`Bot FAILED to start: config error — ${msg}. Fix config/settings.yml or config/translators.yml.`, 'error')
         .catch(() => {});
     }
@@ -66,19 +66,26 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Production (team) channel: ONLY the assignment / reviewer / daily-summary
+  // cards go here (notifier.notifyAssignments / notifyReviews / notifyDailySummary),
+  // so the team channel stays signal-only.
   const notifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_WEBHOOK_URL, logger);
-  // Low-signal operational alerts (zero-scan / possible selector drift) go to a
-  // separate diagnostics space so they don't clutter the production channel.
+  // Diagnostics (ops) channel: every lifecycle + alert message — bot started/
+  // stopped, errors, browser recovery, re-auth, watchdog, scan/sheet alerts,
+  // zero-scan — goes here instead, to keep ops noise off the team channel.
   // Falls back to log-only when GOOGLE_CHAT_TEST_WEBHOOK_URL is unset.
   const diagNotifier = new GoogleChatNotifier(process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL, logger);
-  // Best-effort mirror of real assignments into Google Sheets. Failures alert
-  // via the production notifier but never block a tick.
+  // Best-effort mirror of real assignments into Google Sheets. Failures alert on
+  // the diagnostics channel but never block a tick.
   const sheetsLogger = new SheetsAssignmentLogger(settings.sheets, logger, (msg) => {
-    void notifier.notify(msg, 'error');
+    void diagNotifier.notify(msg, 'error');
   });
 
   if (!process.env.GOOGLE_CHAT_WEBHOOK_URL) {
-    logger.warn('GOOGLE_CHAT_WEBHOOK_URL not set — Google Chat notifications are disabled');
+    logger.warn('GOOGLE_CHAT_WEBHOOK_URL not set — assignment/summary cards are disabled');
+  }
+  if (!process.env.GOOGLE_CHAT_TEST_WEBHOOK_URL) {
+    logger.warn('GOOGLE_CHAT_TEST_WEBHOOK_URL not set — ops/diagnostic alerts are log-only');
   }
   logger.info('bot starting', { node: process.version, dryRun: settings.assignment.dryRun });
 
@@ -96,7 +103,7 @@ async function main(): Promise<void> {
     healthRecovered = await health.load();
     page = await session.start();
   } catch (err) {
-    await notifier.notify(`Bot FAILED to start: ${(err as Error).message} — check host logs`, 'error');
+    await diagNotifier.notify(`Bot FAILED to start: ${(err as Error).message} — check host logs`, 'error');
     throw err;
   }
 
@@ -149,7 +156,7 @@ async function main(): Promise<void> {
   await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
 
   const scanAlert = (msg: string): void => {
-    void notifier.notify(msg, 'warn');
+    void diagNotifier.notify(msg, 'warn');
   };
   const engine = new AssignmentEngine(translators, state);
   // Per-language reviewer map (WAITING_REVIEW → reviewer), or undefined when the
@@ -168,7 +175,7 @@ async function main(): Promise<void> {
   const reauth = new ReAuthManager({
     ensureLoggedIn: () => session.ensureLoggedIn(),
     notify: settings.reliability.reauth.alertOnExpiry
-      ? (t, s) => notifier.notify(t, s)
+      ? (t, s) => diagNotifier.notify(t, s)
       : async () => {},
     logger,
     onPause: () => health.recordAuthEpisode(),
@@ -280,7 +287,7 @@ async function main(): Promise<void> {
             retryCount: entry.retryCount,
             failed: entry.failed,
           });
-          await notifier.notify(
+          await diagNotifier.notify(
             `Job ${job.id} abandoned after ${settings.assignment.maxPartialRetries} PARTIAL retries — failed: ${entry.failed?.join(', ') ?? '?'}. Manual fix needed (check translators.yml / TMS).`,
             'error'
           );
@@ -432,7 +439,7 @@ async function main(): Promise<void> {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
           logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
           await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
-          await notifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
+          await diagNotifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
       health.recordTickSuccess();
@@ -504,7 +511,7 @@ async function main(): Promise<void> {
     } catch (err) {
       if (isBrowserDeadError(err)) {
         logger.error('browser died; recovering', { error: (err as Error).message });
-        await notifier.notify('Browser crashed — recovering', 'warn');
+        await diagNotifier.notify('Browser crashed — recovering', 'warn');
         try {
           page = await session.recover();
           rebuildPipeline(page);
@@ -516,13 +523,13 @@ async function main(): Promise<void> {
           // if the session is genuinely expired.
           health.recordTickError();
           logger.error('browser recovery failed', { error: (recoverErr as Error).message });
-          await notifier.notify(`Browser recovery failed: ${(recoverErr as Error).message}`, 'error');
+          await diagNotifier.notify(`Browser recovery failed: ${(recoverErr as Error).message}`, 'error');
         }
       } else {
         health.recordTickError();
         logger.error('tick failed', { error: (err as Error).message });
         if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
-          await notifier.notify(
+          await diagNotifier.notify(
             `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
             'error'
           );
@@ -607,7 +614,7 @@ async function main(): Promise<void> {
       await session.close();
       await lock.release();
       logger.info('shutdown complete');
-      await notifier.notify('Bot stopped', 'info');
+      await diagNotifier.notify('Bot stopped', 'info');
     } catch (err) {
       // Never let a teardown failure surface as an unhandled rejection — exit cleanly.
       logger.error('error during shutdown (exiting anyway)', { error: (err as Error).message });
@@ -619,7 +626,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  await notifier.notify(
+  await diagNotifier.notify(
     `Bot started (dryRun=${settings.assignment.dryRun}, interval=${settings.polling.intervalMinutes}min)`,
     'info'
   );

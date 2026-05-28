@@ -5,8 +5,9 @@ import type { DailySummaryStats, SupportedLanguage } from '../types/index.js';
 
 interface TodayCounters {
   date: string;
-  assigned: number; // language-level assignments
+  assigned: number; // language-level (translator) assignments
   jobsAssigned: number; // jobs that received at least one assignment
+  reviewed: number; // reviewer assignments (separate from translations)
   failed: number;
   authEpisodes: number;
   lo: number; // lo-LA language assignments
@@ -27,7 +28,7 @@ interface HealthState {
 }
 
 function emptyToday(now: Date): TodayCounters {
-  return { date: localDateString(now), assigned: 0, jobsAssigned: 0, failed: 0, authEpisodes: 0, lo: 0, km: 0, ticks: 0 };
+  return { date: localDateString(now), assigned: 0, jobsAssigned: 0, reviewed: 0, failed: 0, authEpisodes: 0, lo: 0, km: 0, ticks: 0 };
 }
 
 export class HealthMonitor {
@@ -113,6 +114,11 @@ export class HealthMonitor {
     this.state.today.jobsAssigned += 1;
   }
 
+  /** Count one real reviewer assignment (tracked separately from translations). */
+  recordReview(): void {
+    this.state.today.reviewed += 1;
+  }
+
   recordAuthEpisode(): void {
     this.state.today.authEpisodes += 1;
   }
@@ -146,6 +152,7 @@ export class HealthMonitor {
       date: t.date,
       assigned: t.assigned,
       jobsAssigned: t.jobsAssigned,
+      reviewed: t.reviewed,
       byLang: { 'lo-LA': t.lo, 'km-KH': t.km },
       failed: t.failed,
       authEpisodes: t.authEpisodes,

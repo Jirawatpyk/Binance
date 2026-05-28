@@ -209,6 +209,17 @@ export function buildDailySummaryCard(s: DailySummaryStats): unknown {
         wrapText: true,
       },
     },
+    {
+      decoratedText: {
+        startIcon: { knownIcon: 'PERSON' },
+        topLabel: 'Reviews assigned',
+        text:
+          s.reviewed === 0
+            ? '<b>No reviewers assigned today</b>'
+            : `<b>${s.reviewed}</b> reviewer assignment(s)`,
+        wrapText: true,
+      },
+    },
   ];
 
   const healthWidgets = [

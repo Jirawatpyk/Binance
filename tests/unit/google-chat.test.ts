@@ -200,6 +200,7 @@ describe('buildDailySummaryCard', () => {
     date: '2026-05-27',
     assigned: 5,
     jobsAssigned: 3,
+    reviewed: 2,
     byLang: { 'lo-LA': 2, 'km-KH': 3 } as Record<'lo-LA' | 'km-KH', number>,
     failed: 0,
     authEpisodes: 1,
@@ -222,6 +223,7 @@ describe('buildDailySummaryCard', () => {
     expect(text).toContain('<b>5</b> language(s) across <b>3</b> job(s)');
     expect(text).toContain('lo-LA <b>2</b>');
     expect(text).toContain('km-KH <b>3</b>');
+    expect(text).toContain('<b>2</b> reviewer assignment(s)');
     expect(text).toContain('<b>240</b> polls');
     expect(text).toContain('<b>12.3h</b>');
     expect(text).toContain('2026-05-27 11:42 UTC'); // last assignment

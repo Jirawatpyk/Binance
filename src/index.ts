@@ -347,15 +347,17 @@ async function main(): Promise<void> {
                   assignee,
                 });
               } else if (role === 'translator') {
-                // Real translator assignment only. Dry-run never affects metrics/
-                // RR. Reviewer assigns are deliberately kept OUT of the health
-                // metrics (today.assigned/byLang/failed) — they're reported via
-                // the per-tick review Chat card instead, so the daily summary
-                // stays a consistent translation-throughput view.
+                // Real translator assignment only (dry-run never affects metrics/
+                // RR). Kept separate from reviewer counts so the daily summary's
+                // translation figures (assigned/byLang/failed) stay consistent.
                 health.recordAssignment(true, lang.code);
                 if (pick?.useRoundRobin && pick.rrKey) {
                   state.incrementRR(pick.rrKey);
                 }
+              } else {
+                // Real reviewer assignment — counted in its own daily-summary
+                // metric, not blended into the translation figures.
+                health.recordReview();
               }
             } catch (err) {
               if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery

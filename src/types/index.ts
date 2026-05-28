@@ -87,8 +87,9 @@ export interface State {
 /** Structured daily-heartbeat figures, used to render the summary card. */
 export interface DailySummaryStats {
   date: string;
-  assigned: number; // language-level assignments today
+  assigned: number; // language-level (translator) assignments today
   jobsAssigned: number; // jobs that received at least one assignment today
+  reviewed: number; // reviewer assignments today (counted separately from translations)
   byLang: Record<SupportedLanguage, number>; // assignments split per language today
   failed: number;
   authEpisodes: number;

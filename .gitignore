@@ -1,6 +1,9 @@
 node_modules/
 dist/
 .env
+# Service-account / Google credentials (secrets — never commit)
+google-credentials.json
+*-credentials.json
 config/settings.yml
 config/translators.yml
 data/

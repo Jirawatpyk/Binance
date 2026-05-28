@@ -50,6 +50,17 @@ const settingsSchema = z.object({
     browserRecycleHours: z.number().positive(),
     consecutiveZeroScanAlert: z.number().int().positive(),
   }),
+  sheets: z
+    .object({
+      enabled: z.boolean(),
+      spreadsheetId: z.string().min(1),
+      credentialsPath: z.string().min(1),
+      tabs: z.object({
+        'lo-LA': z.string().min(1),
+        'km-KH': z.string().min(1),
+      }),
+    })
+    .optional(),
 }).refine(
   (s) => s.scan.processedJobRetainHours >= s.scan.lookbackHours,
   { message: 'scan.processedJobRetainHours must be >= scan.lookbackHours' }

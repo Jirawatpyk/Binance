@@ -45,3 +45,14 @@ reliability:
     consecutiveErrorAlert: 3     # consecutive failing ticks before alerting
   browserRecycleHours: 24        # proactively restart the browser this often (memory hygiene)
   consecutiveZeroScanAlert: 5    # alert if scan returns 0 candidates this many ticks in a row (selector drift)
+
+sheets:
+  # Mirror real (non-dry-run) assignments into a Google Sheet. Disabled by
+  # default. The credentials file is a service-account key (gitignored); the
+  # spreadsheet must be shared with that service account as Editor.
+  enabled: false
+  spreadsheetId: "1Y1cua4PwwZaDdxOiZVbWK-YOsxvM9f1OMD2JHD46zC4"
+  credentialsPath: ./google-credentials.json
+  tabs:
+    lo-LA: "Lao Assign"     # lo-LA assignments are appended here
+    km-KH: "Khmer Assign"   # km-KH assignments are appended here

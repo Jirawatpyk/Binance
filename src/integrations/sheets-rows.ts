@@ -20,19 +20,22 @@ export function buildSheetRows(
   items: AssignmentSummaryItem[],
   existingIdsByTab: Record<string, Set<string>>,
   tabs: TabMap
-): Record<string, string[][]> {
-  const out: Record<string, string[][]> = {};
+): Record<string, (string | number)[][]> {
+  const out: Record<string, (string | number)[][]> = {};
   for (const item of items) {
     for (const [lang, translator] of Object.entries(item.assigned)) {
       const tab = tabs[lang as SupportedLanguage];
       if (!tab) continue; // language with no tab mapping — skip
       const existing = (existingIdsByTab[tab] ??= new Set<string>());
       if (existing.has(item.jobId)) continue; // dedup by Job ID per tab
+      // Word count stays a real number so the WC column is summable/sortable;
+      // everything else is a literal string. With RAW (see writeRows) a string
+      // is never interpreted as a formula, and a number stays numeric.
       (out[tab] ??= []).push([
         item.jobId,
         item.name,
         formatDueCell(item.dueDate),
-        String(item.wordCount),
+        item.wordCount,
         translator,
       ]);
       existing.add(item.jobId);

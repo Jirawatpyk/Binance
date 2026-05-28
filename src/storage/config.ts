@@ -55,10 +55,16 @@ const settingsSchema = z.object({
       enabled: z.boolean(),
       spreadsheetId: z.string().min(1),
       credentialsPath: z.string().min(1),
-      tabs: z.object({
-        'lo-LA': z.string().min(1),
-        'km-KH': z.string().min(1),
-      }),
+      tabs: z
+        .object({
+          'lo-LA': z.string().min(1),
+          'km-KH': z.string().min(1),
+        })
+        // The Sheet stores Job ID but not language, so dedup is per-tab; mapping
+        // both languages to one tab would silently drop one language's rows.
+        .refine((t) => t['lo-LA'] !== t['km-KH'], {
+          message: 'sheets.tabs lo-LA and km-KH must be different tabs',
+        }),
     })
     .optional(),
 }).refine(

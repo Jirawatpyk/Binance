@@ -106,6 +106,20 @@ sheets: { enabled: true, spreadsheetId: "SID", credentialsPath: ./google-credent
 `);
     expect(() => loadSettings(p)).toThrow(); // tabs missing
   });
+
+  it('rejects a sheets block whose two languages map to the same tab', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+sheets: { enabled: true, spreadsheetId: "SID", credentialsPath: ./google-credentials.json, tabs: { lo-LA: "Same Tab", km-KH: "Same Tab" } }
+`);
+    expect(() => loadSettings(p)).toThrow();
+  });
 });
 
 describe('loadTranslators', () => {

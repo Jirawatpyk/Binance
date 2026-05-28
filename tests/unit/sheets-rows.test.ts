@@ -34,8 +34,9 @@ describe('buildSheetRows', () => {
       },
     ];
     const rows = buildSheetRows(items, noExisting(), tabs);
-    expect(rows['Lao Assign']).toEqual([['100', 'Job A', '2026-05-30 14:05 UTC', '250', 'LO_T1@eqho.com']]);
-    expect(rows['Khmer Assign']).toEqual([['100', 'Job A', '2026-05-30 14:05 UTC', '250', 'kh_t1@eqho.com']]);
+    // WC stays a number (250), not the string '250', so the sheet column is numeric.
+    expect(rows['Lao Assign']).toEqual([['100', 'Job A', '2026-05-30 14:05 UTC', 250, 'LO_T1@eqho.com']]);
+    expect(rows['Khmer Assign']).toEqual([['100', 'Job A', '2026-05-30 14:05 UTC', 250, 'kh_t1@eqho.com']]);
   });
 
   it('skips a Job ID already present in that tab (dedup)', () => {
@@ -52,7 +53,7 @@ describe('buildSheetRows', () => {
       { jobId: '300', name: 'No due', wordCount: 5, assigned: { 'km-KH': 'kh_t2@eqho.com' } },
     ];
     const rows = buildSheetRows(items, noExisting(), tabs);
-    expect(rows['Khmer Assign']).toEqual([['300', 'No due', '', '5', 'kh_t2@eqho.com']]);
+    expect(rows['Khmer Assign']).toEqual([['300', 'No due', '', 5, 'kh_t2@eqho.com']]);
   });
 
   it('dedups the same Job ID appearing twice within one batch', () => {
@@ -78,7 +79,7 @@ describe('buildSheetRows', () => {
       { jobId: '700', name: 'Mixed', wordCount: 3, assigned: { 'xx-YY': 'z@eqho.com', 'lo-LA': 'LO_T1@eqho.com' } as Record<string, string> },
     ];
     const rows = buildSheetRows(items, noExisting(), tabs);
-    expect(rows['Lao Assign']).toEqual([['700', 'Mixed', '', '3', 'LO_T1@eqho.com']]);
+    expect(rows['Lao Assign']).toEqual([['700', 'Mixed', '', 3, 'LO_T1@eqho.com']]);
     expect(rows['Khmer Assign']).toBeUndefined();
   });
 

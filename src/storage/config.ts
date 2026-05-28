@@ -67,6 +67,15 @@ const settingsSchema = z.object({
         }),
     })
     .optional(),
+  review: z
+    .object({
+      enabled: z.boolean(),
+      reviewers: z.object({
+        'lo-LA': z.string().email().optional(),
+        'km-KH': z.string().email().optional(),
+      }),
+    })
+    .optional(),
 }).refine(
   (s) => s.scan.processedJobRetainHours >= s.scan.lookbackHours,
   { message: 'scan.processedJobRetainHours must be >= scan.lookbackHours' }

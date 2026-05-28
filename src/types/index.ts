@@ -59,6 +59,10 @@ export interface Settings {
     credentialsPath: string;
     tabs: Record<SupportedLanguage, string>;
   };
+  review?: {
+    enabled: boolean;
+    reviewers: Partial<Record<SupportedLanguage, string>>;
+  };
 }
 
 export type ProcessStatus = 'FULL' | 'PARTIAL' | 'ABANDONED';

@@ -166,8 +166,20 @@ export class SheetsAssignmentLogger {
       body: init?.jsonBody !== undefined ? JSON.stringify(init.jsonBody) : undefined,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!res.ok) throw new SheetsHttpError(res.status, `${errLabel} ${res.status}: ${await res.text()}`);
+    if (!res.ok) {
+      // Cap the body: a 5xx can return a multi-KB HTML page that would bloat the
+      // log and (at the alert threshold) the Chat notification.
+      const body = (await res.text().catch(() => '')).slice(0, 300);
+      throw new SheetsHttpError(res.status, `${errLabel} ${res.status}: ${body}`);
+    }
     return res;
+  }
+
+  /** A sheet title quoted for A1 notation, with any embedded single quote
+   *  doubled per A1 rules (e.g. "Bob's Tab" → 'Bob''s Tab'). Without this a
+   *  quote in a tab name produces a malformed range → HTTP 400 every call. */
+  private a1Tab(tab: string): string {
+    return `'${tab.replace(/'/g, "''")}'`;
   }
 
   private async fetchTabTitles(): Promise<string[]> {
@@ -181,18 +193,20 @@ export class SheetsAssignmentLogger {
    *  `length` is the last used row across the whole table (→ next empty row);
    *  each row's column C (index 2) is the dedup key. */
   private async fetchUsedRows(tab: string): Promise<string[][]> {
-    const range = encodeURIComponent(`'${tab}'!A:G`);
+    const range = encodeURIComponent(`${this.a1Tab(tab)}!A:G`);
     const res = await this.request(`${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}`, `read ${tab}`);
     const body = (await res.json()) as { values?: string[][] };
     return body.values ?? [];
   }
 
   /** Write rows into an explicit `C{startRow}:G{...}` range so the columns are
-   *  guaranteed (unlike append, which keys off the detected table's first column). */
+   *  guaranteed (unlike append, which keys off the detected table's first column).
+   *  Uses RAW (not USER_ENTERED) so a scraped job/file name beginning with
+   *  `= + - @` is stored literally, never interpreted as a formula. */
   private async writeRows(tab: string, startRow: number, rows: string[][]): Promise<void> {
     const endRow = startRow + rows.length - 1;
-    const range = encodeURIComponent(`'${tab}'!C${startRow}:G${endRow}`);
-    const url = `${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`;
+    const range = encodeURIComponent(`${this.a1Tab(tab)}!C${startRow}:G${endRow}`);
+    const url = `${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}?valueInputOption=RAW`;
     await this.request(url, `write ${tab}`, { method: 'PUT', jsonBody: { values: rows } });
   }
 }

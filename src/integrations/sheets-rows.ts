@@ -1,13 +1,12 @@
 import type { SupportedLanguage } from '../types/index.js';
 import type { AssignmentSummaryItem } from '../notifications/google-chat.js';
+import { formatUtcMinute } from '../core/time.js';
 
 export type TabMap = Record<SupportedLanguage, string>;
 
 /** Due date as "YYYY-MM-DD HH:mm UTC", or "" when unknown/invalid. */
 export function formatDueCell(d?: Date | null): string {
-  if (!d || Number.isNaN(d.getTime())) return '';
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
+  return !d || Number.isNaN(d.getTime()) ? '' : formatUtcMinute(d);
 }
 
 /**

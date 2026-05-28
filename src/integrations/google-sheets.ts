@@ -59,20 +59,30 @@ export class SheetsAssignmentLogger {
     }
   }
 
-  /** Append a row per assigned language to the matching tab (deduped by Job ID).
+  /** Write a row per assigned language to the matching tab (deduped by Job ID).
    *  No-op when disabled or there's nothing to write. Never throws. */
   async appendAssignments(items: AssignmentSummaryItem[]): Promise<void> {
     if (this.disabled || !this.config || !this.jwt || items.length === 0) return;
     try {
+      // Read the whole A:G extent once per tab: its row count gives the true
+      // next empty row (existing rows may have data only in B/D/F with column C
+      // blank, so counting column C alone undercounts and would overwrite real
+      // rows). Column C (index 2) within those rows is the dedup key. We then
+      // write with an explicit `C{n}:G{n}` update — values:append keys off the
+      // detected table's first column and lands in A:E here, so it's unusable.
+      const usedByTab: Record<string, string[][]> = {};
       const existingIdsByTab: Record<string, Set<string>> = {};
       for (const tab of new Set(Object.values(this.config.tabs))) {
-        existingIdsByTab[tab] = await this.fetchJobIds(tab);
+        const used = await this.fetchUsedRows(tab);
+        usedByTab[tab] = used;
+        existingIdsByTab[tab] = new Set(used.map((r) => (r[2] ?? '').trim()).filter(Boolean));
       }
       const rowsByTab = buildSheetRows(items, existingIdsByTab, this.config.tabs);
       for (const [tab, rows] of Object.entries(rowsByTab)) {
         if (rows.length === 0) continue;
-        await this.appendRows(tab, rows);
-        this.logger.info('appended assignment rows to sheet', { tab, count: rows.length });
+        const startRow = usedByTab[tab].length + 1; // first empty row below ALL existing data
+        await this.writeRows(tab, startRow, rows);
+        this.logger.info('wrote assignment rows to sheet', { tab, count: rows.length, startRow });
       }
       this.consecutiveFailures = 0;
     } catch (err) {
@@ -106,8 +116,11 @@ export class SheetsAssignmentLogger {
     return (body.sheets ?? []).map((s) => s.properties?.title ?? '');
   }
 
-  private async fetchJobIds(tab: string): Promise<Set<string>> {
-    const range = encodeURIComponent(`'${tab}'!C:C`);
+  /** All rows that have data in columns A:G. The API omits trailing empty rows,
+   *  so `length` is the last used row across the whole table (used to find the
+   *  next empty row); each row's column C (index 2) is the dedup key. */
+  private async fetchUsedRows(tab: string): Promise<string[][]> {
+    const range = encodeURIComponent(`'${tab}'!A:G`);
     const url = `${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}`;
     const res = await fetch(url, {
       headers: { Authorization: `Bearer ${await this.bearer()}` },
@@ -115,18 +128,21 @@ export class SheetsAssignmentLogger {
     });
     if (!res.ok) throw new Error(`read ${tab} ${res.status}: ${await res.text()}`);
     const body = (await res.json()) as { values?: string[][] };
-    return new Set((body.values ?? []).map((r) => (r[0] ?? '').trim()).filter(Boolean));
+    return body.values ?? [];
   }
 
-  private async appendRows(tab: string, rows: string[][]): Promise<void> {
-    const range = encodeURIComponent(`'${tab}'!C:G`);
-    const url = `${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`;
+  /** Write rows into an explicit `C{startRow}:G{...}` range so the columns are
+   *  guaranteed (unlike append, which keys off the detected table's first column). */
+  private async writeRows(tab: string, startRow: number, rows: string[][]): Promise<void> {
+    const endRow = startRow + rows.length - 1;
+    const range = encodeURIComponent(`'${tab}'!C${startRow}:G${endRow}`);
+    const url = `${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}?valueInputOption=USER_ENTERED`;
     const res = await fetch(url, {
-      method: 'POST',
+      method: 'PUT',
       headers: { Authorization: `Bearer ${await this.bearer()}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({ values: rows }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (!res.ok) throw new Error(`append ${tab} ${res.status}: ${await res.text()}`);
+    if (!res.ok) throw new Error(`write ${tab} ${res.status}: ${await res.text()}`);
   }
 }

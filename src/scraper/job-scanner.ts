@@ -185,7 +185,7 @@ export class JobScanner {
     }
 
     // Pure dedup (vs translation candidates + within the list) + skip-predicate
-    // filter + reviewOnly tag + oldest-first sort (unit-tested in
+    // filter + reviewOnly tag + newest-first sort (unit-tested in
     // review-candidates.test.ts). The cap is applied here so the truncation is
     // logged for the operator.
     const selected = selectReviewCandidates(found, new Set(translationMap.keys()), rs.isSkippable);

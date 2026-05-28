@@ -61,6 +61,8 @@ export interface Settings {
   };
   review?: {
     enabled: boolean;
+    scanLookbackHours: number;
+    maxCandidatesPerTick: number;
     reviewers: Partial<Record<SupportedLanguage, string>>;
   };
 }

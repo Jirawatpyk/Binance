@@ -177,6 +177,52 @@ review: { enabled: true, reviewers: { lo_LA: "LO_T2@eqho.com" } }
 `);
     expect(() => loadSettings(p)).toThrow();
   });
+
+  it('defaults review.scanLookbackHours (168) and maxCandidatesPerTick (10) when omitted', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+review: { enabled: true, reviewers: { lo-LA: "LO_T2@eqho.com" } }
+`);
+    const s = loadSettings(p);
+    expect(s.review?.scanLookbackHours).toBe(168);
+    expect(s.review?.maxCandidatesPerTick).toBe(10);
+  });
+
+  it('accepts explicit review.scanLookbackHours and maxCandidatesPerTick', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+review: { enabled: true, scanLookbackHours: 240, maxCandidatesPerTick: 5, reviewers: { lo-LA: "LO_T2@eqho.com" } }
+`);
+    const s = loadSettings(p);
+    expect(s.review?.scanLookbackHours).toBe(240);
+    expect(s.review?.maxCandidatesPerTick).toBe(5);
+  });
+
+  it('rejects a non-positive review.maxCandidatesPerTick', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+review: { enabled: true, maxCandidatesPerTick: 0, reviewers: { lo-LA: "LO_T2@eqho.com" } }
+`);
+    expect(() => loadSettings(p)).toThrow();
+  });
 });
 
 describe('loadTranslators', () => {

@@ -70,6 +70,13 @@ const settingsSchema = z.object({
   review: z
     .object({
       enabled: z.boolean(),
+      // The review scan uses a WIDER Created window than scan.lookbackHours so
+      // jobs that reach WAITING_REVIEW days after creation are still found.
+      // Defaulted so a settings.yml written before this field still loads.
+      scanLookbackHours: z.number().positive().default(168),
+      // Separate per-tick cap for review-pass detail opens (kept off the
+      // translation cap so review work is never starved by a translation burst).
+      maxCandidatesPerTick: z.number().int().positive().default(10),
       reviewers: z
         .object({
           'lo-LA': z.string().email().optional(),

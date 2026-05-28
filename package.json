@@ -15,6 +15,7 @@
     "check-config": "tsx src/index.ts --check-config",
     "smoke": "tsx scripts/smoke.ts",
     "capture-cookies": "tsx scripts/capture-cookies.ts",
+    "test:sheets": "tsx scripts/test-sheets.ts",
     "service:install": "npm run build && node scripts/install-windows-service.js install",
     "service:uninstall": "node scripts/install-windows-service.js uninstall"
   },
@@ -23,6 +24,7 @@
   },
   "dependencies": {
     "dotenv": "^16.4.7",
+    "google-auth-library": "^10.6.2",
     "playwright": "^1.49.0",
     "playwright-extra": "^4.3.6",
     "puppeteer-extra-plugin-stealth": "^2.11.2",

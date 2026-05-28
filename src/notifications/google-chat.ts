@@ -1,5 +1,6 @@
 import type winston from 'winston';
 import type { DailySummaryStats } from '../types/index.js';
+import { formatUtcMinute as fmtUtc } from '../core/time.js';
 
 export type Severity = 'info' | 'warn' | 'error';
 
@@ -43,13 +44,6 @@ export function dueColor(d?: Date | null, now: Date = new Date()): string {
   if (hoursLeft <= 24) return '#d93025'; // overdue or < 1 day — urgent
   if (hoursLeft <= 72) return '#e8710a'; // < 3 days — soon
   return '#888888'; // plenty of time
-}
-
-/** "YYYY-MM-DD HH:mm UTC" for a valid Date. Single source of truth for the two
- *  card timestamp formatters below. */
-function fmtUtc(d: Date): string {
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ${p(d.getUTCHours())}:${p(d.getUTCMinutes())} UTC`;
 }
 
 /** Format a due date as "Due YYYY-MM-DD HH:mm UTC" (prefixed "OVERDUE — " when

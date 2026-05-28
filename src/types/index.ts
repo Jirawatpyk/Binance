@@ -52,6 +52,12 @@ export interface Settings {
     browserRecycleHours: number;
     consecutiveZeroScanAlert: number;
   };
+  sheets?: {
+    enabled: boolean;
+    spreadsheetId: string;
+    credentialsPath: string;
+    tabs: Record<SupportedLanguage, string>;
+  };
 }
 
 export type ProcessStatus = 'FULL' | 'PARTIAL' | 'ABANDONED';

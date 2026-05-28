@@ -13,6 +13,13 @@ export interface AssignmentSummaryItem {
   dueDate?: Date | null; // job due date (rendered in UTC); omitted when unknown
 }
 
+/** One job's reviewer assignments for the per-cycle review summary card. */
+export interface ReviewSummaryItem {
+  jobId: string;
+  name: string;
+  reviewed: Record<string, string>; // language code -> reviewer email
+}
+
 function emojiFor(severity: Severity): string {
   return severity === 'error' ? '🚨' : severity === 'warn' ? '⚠️' : 'ℹ️';
 }
@@ -113,6 +120,41 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
             title: `✅ Assigned ${jobs.length} job${plural}`,
             subtitle: `${totalAssignments} assignment${totalAssignments === 1 ? '' : 's'}  ·  ${totalWords.toLocaleString('en-US')} words`,
           },
+          sections: [{ widgets }],
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * A single card summarising every reviewer assigned in one polling cycle — one
+ * `decoratedText` row per job (job id + name, then `lang → reviewer` lines),
+ * dividers between jobs. Mirrors buildAssignmentSummaryCard but for reviewers.
+ */
+export function buildReviewSummaryCard(items: ReviewSummaryItem[]): unknown {
+  const widgets: unknown[] = [];
+  items.forEach((j, i) => {
+    if (i > 0) widgets.push({ divider: {} });
+    const langs = Object.entries(j.reviewed)
+      .map(([lang, reviewer]) => `• <b>${esc(lang)}</b> → ${esc(reviewer)}`)
+      .join('<br>');
+    widgets.push({
+      decoratedText: {
+        startIcon: { knownIcon: 'PERSON' },
+        topLabel: `Job ${esc(j.jobId)}`,
+        text: `<b>${esc(j.name)}</b><br>${langs}`,
+        wrapText: true,
+      },
+    });
+  });
+  const plural = items.length === 1 ? '' : 's';
+  return {
+    cardsV2: [
+      {
+        cardId: `review-${Date.now()}`,
+        card: {
+          header: { title: `🔍 Reviewer assigned — ${items.length} job${plural}` },
           sections: [{ widgets }],
         },
       },
@@ -236,6 +278,12 @@ export class GoogleChatNotifier {
   async notifyAssignments(jobs: AssignmentSummaryItem[]): Promise<void> {
     if (jobs.length === 0) return;
     await this.post(buildAssignmentSummaryCard(jobs), 'info');
+  }
+
+  /** Fire-and-forget per-cycle reviewer-assignment summary. No-op when empty. */
+  async notifyReviews(items: ReviewSummaryItem[]): Promise<void> {
+    if (items.length === 0) return;
+    await this.post(buildReviewSummaryCard(items), 'info');
   }
 
   /** Fire-and-forget daily heartbeat summary card. Never throws. */

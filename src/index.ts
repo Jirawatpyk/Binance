@@ -399,7 +399,11 @@ async function main(): Promise<void> {
             } catch (err) {
               if (isBrowserDeadError(err)) throw err; // bubble to outer handler for browser recovery
               failed.push(lang.code);
-              if (role === 'translator') health.recordAssignment(false, lang.code);
+              // Count both translator AND reviewer failures so a repeatedly-failing
+              // reviewer assign is visible in the daily summary's "failed" count
+              // (not only via the eventual ABANDONED alert). recordAssignment(false)
+              // only bumps today.failed — it never touches the success/byLang metrics.
+              health.recordAssignment(false, lang.code);
               logger.error('assignment failed', { jobId: job.id, language: lang.code, role, error: (err as Error).message });
               await captureScreenshot(page, settings.storage.logsDir, `assign-${job.id}-${lang.code}`, settings.logging.screenshotMaxPerDay).catch(() => null);
             }

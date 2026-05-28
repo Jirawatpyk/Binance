@@ -291,6 +291,20 @@ export class JobScanner {
     const fromVal = await fromInput.inputValue().catch(() => '?');
     const toVal = await rangeInputs.nth(1).inputValue().catch(() => '?');
     this.logger.debug('date filter set', { fromStr, toStr, fromAccepted: fromVal, toAccepted: toVal });
+
+    // Apply-verification: a value that actually applied leaves the input
+    // non-empty and readable. An empty / unreadable ('?') read-back means the
+    // board rejected or cleared what we typed, so the scan would silently run
+    // against the WRONG Created window (nothing threw). This matters most for the
+    // review pass, whose WIDER window failing to apply would make it scan the
+    // narrow translation window and surface zero aged review jobs. (A snap-back to
+    // a DIFFERENT valid date is not caught here — that needs the board's exact
+    // read-back format, which the debug line above exposes for later tuning.)
+    if (!fromVal || !toVal || fromVal === '?' || toVal === '?') {
+      this.onAlert(
+        `Job board Created filter may not have applied (read back from="${fromVal}", to="${toVal}"; wanted from="${fromStr}", to="${toStr}") — this tick's scan may use the wrong date window`
+      );
+    }
   }
 
   /**

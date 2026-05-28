@@ -32,4 +32,12 @@ describe('pendingRole', () => {
   it('null for unrelated statuses', () => {
     expect(pendingRole(row({ status: 'REVIEWING', translator: 'a@eqho.com', reviewer: null }), reviewers)).toBeNull();
   });
+
+  it('null when WAITING_TRANSLATION but a translator is already set (no double-assign)', () => {
+    expect(pendingRole(row({ status: 'WAITING_TRANSLATION', translator: 'a@eqho.com' }), reviewers)).toBeNull();
+  });
+
+  it('reviewer branch ignores the translator field (returns reviewer even if translator is null)', () => {
+    expect(pendingRole(row({ status: 'WAITING_REVIEW', translator: null, reviewer: null }), reviewers)).toBe('reviewer');
+  });
 });

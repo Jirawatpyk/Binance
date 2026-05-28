@@ -17,6 +17,18 @@ const FAILURE_ALERT_THRESHOLD = 3;
 // disable + alert once, instead of log-spamming every tick forever.
 const PERMANENT_STATUSES = new Set([401, 403, 404]);
 
+/** Reject `p` if it doesn't settle within `ms`. Used to bound the OAuth token
+ *  fetch, which has no built-in timeout (unlike our AbortSignal-wrapped fetches)
+ *  and is awaited at startup before the watchdog exists — a hung token endpoint
+ *  would otherwise block the whole bot from starting. */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer)) as Promise<T>;
+}
+
 /** Carries the HTTP status so the caller can tell a permanent failure (auth /
  *  permission / not-found) from a transient one (timeout, 5xx). */
 class SheetsHttpError extends Error {
@@ -81,13 +93,12 @@ export class SheetsAssignmentLogger {
   async appendAssignments(items: AssignmentSummaryItem[]): Promise<void> {
     if (this.disabled || !this.config || !this.jwt || items.length === 0) return;
 
-    // Phase 1 — read each tab's used rows in isolation. We read C:D: column D
-    // (File name) is populated on every row by both humans and the bot, so the
-    // row count gives the true next empty row (counting column C alone would
-    // undercount — humans leave C blank — and overwrite real rows). Column C
-    // (index 0 of the C:D slice) is the dedup key. Reading two columns instead
-    // of A:G keeps the per-tick payload small as the sheet grows. A tab whose
-    // read fails is left out of startRowByTab and skipped in phase 3.
+    // Phase 1 — read each tab's used rows in isolation. We read the full A:G so
+    // the row count reflects the true last used row across EVERY column — humans
+    // maintain this sheet and may put data in A/B only (the spec reserves A/B for
+    // manual entry), so a narrower read (e.g. C:D) would miss an A/B-only trailing
+    // row and overwrite it. Column C (index 2) within those rows is the dedup key.
+    // A tab whose read fails is left out of startRowByTab and skipped in phase 3.
     const startRowByTab: Record<string, number> = {};
     const existingIdsByTab: Record<string, Set<string>> = {};
     let anyFailure = false;
@@ -95,7 +106,7 @@ export class SheetsAssignmentLogger {
       try {
         const used = await this.fetchUsedRows(tab);
         startRowByTab[tab] = used.length + 1;
-        existingIdsByTab[tab] = new Set(used.map((r) => (r[0] ?? '').trim()).filter(Boolean));
+        existingIdsByTab[tab] = new Set(used.map((r) => (r[2] ?? '').trim()).filter(Boolean));
       } catch (err) {
         anyFailure = true;
         if (this.disableIfPermanent('read', tab, err)) return;
@@ -151,7 +162,7 @@ export class SheetsAssignmentLogger {
   }
 
   private async bearer(): Promise<string> {
-    const { token } = await this.jwt!.getAccessToken();
+    const { token } = await withTimeout(this.jwt!.getAccessToken(), REQUEST_TIMEOUT_MS, 'token fetch');
     if (!token) throw new Error('failed to obtain a Google access token');
     return token;
   }
@@ -191,11 +202,12 @@ export class SheetsAssignmentLogger {
     return (body.sheets ?? []).map((s) => s.properties?.title ?? '');
   }
 
-  /** Rows of columns C:D (Job ID, File name). The API omits trailing empty rows,
-   *  and column D is populated on every used row, so `length` is the last used
-   *  row (→ next empty row); each row's column C (index 0) is the dedup key. */
+  /** All rows with data in columns A:G. The API omits trailing empty rows, so
+   *  `length` is the last used row across the whole table (→ next empty row),
+   *  safe even for human rows that fill only A/B; each row's column C (index 2)
+   *  is the dedup key. */
   private async fetchUsedRows(tab: string): Promise<string[][]> {
-    const range = encodeURIComponent(`${this.a1Tab(tab)}!C:D`);
+    const range = encodeURIComponent(`${this.a1Tab(tab)}!A:G`);
     const res = await this.request(`${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}`, `read ${tab}`);
     const body = (await res.json()) as { values?: string[][] };
     return body.values ?? [];
@@ -205,7 +217,7 @@ export class SheetsAssignmentLogger {
    *  guaranteed (unlike append, which keys off the detected table's first column).
    *  Uses RAW (not USER_ENTERED) so a scraped job/file name beginning with
    *  `= + - @` is stored literally, never interpreted as a formula. */
-  private async writeRows(tab: string, startRow: number, rows: string[][]): Promise<void> {
+  private async writeRows(tab: string, startRow: number, rows: (string | number)[][]): Promise<void> {
     const endRow = startRow + rows.length - 1;
     const range = encodeURIComponent(`${this.a1Tab(tab)}!C${startRow}:G${endRow}`);
     const url = `${SHEETS_API}/${this.config!.spreadsheetId}/values/${range}?valueInputOption=RAW`;

@@ -11,8 +11,10 @@ export interface ReAuthDeps {
   logger: winston.Logger;
   /** Called once when transitioning AUTHED -> PAUSED_AUTH (e.g., health metric). */
   onPause?: () => void;
-  /** Optional: try to auto-renew the session (returns true on success). Attempted
-   *  once before pausing, to recover a session that expired while the bot was down. */
+  /** Optional: try to auto-renew the session (resolves true on success, false on
+   *  any failure; should not throw — a throw is caught and treated as failure).
+   *  Attempted once before pausing, to recover an expired session (e.g. one that
+   *  lapsed while the bot was down, or mid-run) without a manual capture-cookies. */
   tryRefresh?: () => Promise<boolean>;
 }
 
@@ -37,9 +39,22 @@ export class ReAuthManager {
       return true;
     } catch (err) {
       if (err instanceof LoginFailedError) {
-        // Before pausing, try to auto-renew (recovers a session that expired
-        // while the bot was down, without a manual capture-cookies).
-        if (this.deps.tryRefresh && (await this.deps.tryRefresh())) {
+        // Before pausing, try to auto-renew (recovers an expired session — e.g.
+        // one that lapsed while the bot was down — without a manual
+        // capture-cookies). tryRefresh is best-effort: a throw (the dep type
+        // doesn't guarantee it won't) is caught and treated as a failed refresh,
+        // so it can never escape ensureReady and abort the tick mid-recovery.
+        let refreshed = false;
+        if (this.deps.tryRefresh) {
+          try {
+            refreshed = await this.deps.tryRefresh();
+          } catch (refreshErr) {
+            this.deps.logger.warn('tryRefresh threw; treating as failed', {
+              error: (refreshErr as Error).message,
+            });
+          }
+        }
+        if (refreshed) {
           try {
             await this.deps.ensureLoggedIn(); // re-verify with the refreshed token
             const wasPaused = this.state === 'PAUSED_AUTH';

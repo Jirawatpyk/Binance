@@ -195,8 +195,9 @@ async function main(): Promise<void> {
       : async () => {},
     logger,
     onPause: () => health.recordAuthEpisode(),
-    // Auto-renew before giving up: recovers a session that expired while the bot
-    // was down (refresh_token still valid). Gated by the autoRenew config knob.
+    // Auto-renew before giving up: recovers an expired session (e.g. one that
+    // lapsed while the bot was down) when the refresh_token is still valid.
+    // Gated by the autoRenew config knob.
     tryRefresh: settings.reliability.reauth.autoRenew ? () => session.refreshAccessToken() : undefined,
   });
 
@@ -510,9 +511,10 @@ async function main(): Promise<void> {
 
         // Proactive auto-renew: when the access token is within
         // refreshThresholdMin of expiry, renew it now so the session never dies.
-        // refreshAccessToken persists the rotated tokens itself (so skip the
-        // saveSession below on success). On success, re-read the expiry so this
-        // tick's pre-expiry warning sees the fresh token and stays quiet.
+        // refreshAccessToken only writes the rotated tokens to localStorage; the
+        // single counted save below persists them. On success, re-read the expiry
+        // so the pre-expiry warning (gated on !refreshed below) reflects the fresh
+        // token.
         let refreshed = false;
         if (
           settings.reliability.reauth.autoRenew &&
@@ -522,16 +524,16 @@ async function main(): Promise<void> {
           if (refreshed) {
             const newExp = await session.getAuthExpiryMs().catch(() => null);
             if (newExp !== null) expMs = newExp;
-            consecutiveSaveFailures = 0; // refreshAccessToken's own saveSession round-tripped
           }
         }
 
-        // Persist only when the token is live AND we didn't just refresh+persist,
-        // so we never overwrite the last-known-good cookies.json with a dead/
-        // unparseable snapshot. A single failure is swallowed; a sustained one is
-        // alerted (it silently reintroduces the stale-snapshot bug this save
-        // exists to prevent).
-        if (!refreshed && expMs > Date.now()) {
+        // Persist while the token is live — this single save handles BOTH a
+        // normal tick and a tick that just refreshed (refreshAccessToken only
+        // writes localStorage), so a refresh-path persist failure is NOT silent:
+        // it goes through the same failure counter + alert below. Gated on a live
+        // token so we never overwrite the last-known-good cookies.json with a
+        // dead/unparseable snapshot.
+        if (expMs > Date.now()) {
           try {
             await session.saveSession();
             consecutiveSaveFailures = 0;

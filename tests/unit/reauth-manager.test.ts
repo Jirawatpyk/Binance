@@ -123,4 +123,33 @@ describe('ReAuthManager.ensureReady', () => {
     expect(notify).toHaveBeenCalledTimes(2); // pause alert (tick1) + restore notice (tick2)
     expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('auto-refreshed'), 'info');
   });
+
+  it('treats a throwing tryRefresh as a failed refresh (pauses, does not escape ensureReady)', async () => {
+    const ensureLoggedIn = vi.fn(async () => { throw new LoginFailedError('expired'); });
+    const tryRefresh = vi.fn(async () => { throw new Error('refresh boom'); });
+    const notify = vi.fn(async () => {});
+    const onPause = vi.fn();
+    const mgr = new ReAuthManager({ ensureLoggedIn, notify, logger: noopLogger, onPause, tryRefresh });
+    expect(await mgr.ensureReady()).toBe(false); // resolves false, does NOT reject/escape
+    expect(mgr.authState).toBe('PAUSED_AUTH');
+    expect(onPause).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not re-fire onPause/notify when re-verify keeps failing while already paused', async () => {
+    const ensureLoggedIn = vi.fn(async () => { throw new LoginFailedError('expired'); });
+    let refreshTrue = false;
+    const tryRefresh = vi.fn(async () => refreshTrue);
+    const notify = vi.fn(async () => {});
+    const onPause = vi.fn();
+    const mgr = new ReAuthManager({ ensureLoggedIn, notify, logger: noopLogger, onPause, tryRefresh });
+    // tick 1: tryRefresh false → pause (onPause + notify once)
+    await mgr.ensureReady();
+    expect(mgr.authState).toBe('PAUSED_AUTH');
+    // tick 2: tryRefresh true but re-verify still throws LoginFailedError → stays paused, no re-fire
+    refreshTrue = true;
+    expect(await mgr.ensureReady()).toBe(false);
+    expect(mgr.authState).toBe('PAUSED_AUTH');
+    expect(onPause).toHaveBeenCalledTimes(1); // not re-fired while already paused
+    expect(notify).toHaveBeenCalledTimes(1); // no new alert while already paused
+  });
 });

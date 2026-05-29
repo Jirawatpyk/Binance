@@ -143,10 +143,12 @@ export class AuthSession {
    * Renew the access token by calling the TMS refresh endpoint with the stored
    * refresh_token, FROM THE PAGE CONTEXT (same origin, so localStorage + the
    * relative /cms/... fetch both work, whether the page is on the board or
-   * /login). On success the new access_token + rotated refresh_token are written
-   * to localStorage and persisted to cookies.json immediately — so a later
-   * saveSession this tick can only persist the NEW tokens (no stale overwrite).
-   * Returns true only when a new access token was stored. Never throws.
+   * /login). On success the new access token (stored under the `auth_token`
+   * localStorage key — the one getAuthExpiryMs reads) and the rotated
+   * refresh_token are written to localStorage; the CALLER persists them via the
+   * tick's counted/alerted saveSession. Doing the writes in-page means that later
+   * saveSession can only snapshot the NEW tokens (no stale overwrite). Returns
+   * true only when a new access token was stored. Never throws.
    */
   async refreshAccessToken(): Promise<boolean> {
     if (!this.page) return false;
@@ -172,7 +174,6 @@ export class AuthSession {
       })
       .catch(() => false);
     if (ok) {
-      await this.saveSession().catch(() => {});
       this.logger.info('access token refreshed via refresh_token');
     } else {
       this.logger.warn('access token refresh failed (refresh_token invalid/expired or endpoint error)');

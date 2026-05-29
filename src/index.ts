@@ -522,6 +522,7 @@ async function main(): Promise<void> {
           if (refreshed) {
             const newExp = await session.getAuthExpiryMs().catch(() => null);
             if (newExp !== null) expMs = newExp;
+            consecutiveSaveFailures = 0; // refreshAccessToken's own saveSession round-tripped
           }
         }
 
@@ -551,8 +552,12 @@ async function main(): Promise<void> {
           }
         }
 
+        // Skip the pre-expiry warning when we just refreshed this tick: the token
+        // is fresh. (If the post-refresh expiry re-read failed, expMs is stale/
+        // near-expiry and would otherwise fire a false "expiring" alert; next tick
+        // re-reads the real expiry.)
         const minsLeft = Math.max(0, Math.round((expMs - Date.now()) / 60_000));
-        if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted) {
+        if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted && !refreshed) {
           await diagNotifier
             .notify(
               `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,

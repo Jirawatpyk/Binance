@@ -17,6 +17,7 @@ import { SheetsAssignmentLogger } from './integrations/google-sheets.js';
 import type { SupportedLanguage, Settings, TranslatorsConfig } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
+import { localDateString } from './core/health-utils.js';
 import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError } from './core/recovery-utils.js';
 import { TranslatorNotFoundError } from './core/errors.js';
@@ -128,6 +129,10 @@ async function main(): Promise<void> {
   await sheetsLogger.init();
 
   let lastBrowserStart = Date.now();
+  // Daily maintenance runs once per local calendar day (prune + screenshot
+  // cleanup). Tracked here — not coupled to heartbeat delivery — so a deferred
+  // markDailySummarySent (webhook outage) doesn't re-run maintenance every tick.
+  let lastMaintenanceDate: string | null = null;
   // Warn once when the session token drops under this many minutes to expiry;
   // re-armed automatically if a refresh extends it.
   const SESSION_EXPIRY_WARN_MIN = 90;
@@ -155,6 +160,8 @@ async function main(): Promise<void> {
     await state.save();
   }
   await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+  // Count startup maintenance as today's run so the first tick doesn't repeat it.
+  lastMaintenanceDate = localDateString(new Date());
 
   const scanAlert = (msg: string): void => {
     void diagNotifier.notify(msg, 'warn');
@@ -258,21 +265,39 @@ async function main(): Promise<void> {
     logger.info('tick started');
     health.recordTickStart();
 
-    // Daily summary is a heartbeat — send it regardless of auth/work state.
+    // Daily summary is a heartbeat — the primary liveness signal — so send it
+    // regardless of auth/work state, and only mark it sent once a channel has
+    // actually delivered it (a transient webhook outage otherwise loses that
+    // day's heartbeat with no in-day retry). Production is the normal home; the
+    // diagnostics channel is a delivery backstop so the signal isn't lost when
+    // the prod webhook is unconfigured or briefly down.
     if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
-      await notifier.notifyDailySummary(health.dailySummaryStats());
-      health.markDailySummarySent();
-      // Daily maintenance alongside the heartbeat. Best-effort: never let a
-      // maintenance error abort the tick.
-      try {
-        const pruned = state.pruneOldJobs(settings.scan.processedJobRetainHours);
-        if (pruned > 0) {
-          logger.info('pruned old processed jobs', { removed: pruned });
-          await state.save();
+      const stats = health.dailySummaryStats();
+      let delivered = await notifier.notifyDailySummary(stats);
+      if (!delivered) delivered = await diagNotifier.notifyDailySummary(stats);
+      if (delivered || (!notifier.isConfigured() && !diagNotifier.isConfigured())) {
+        // Confirmed delivery, or no webhook configured at all (log-only
+        // deployment — nothing to deliver, so don't retry every tick forever).
+        health.markDailySummarySent();
+      } else {
+        logger.warn('daily heartbeat not delivered to any channel; will retry next tick');
+      }
+
+      // Daily maintenance — once per local day, independent of heartbeat
+      // delivery. Best-effort: never let a maintenance error abort the tick.
+      const today = localDateString(new Date());
+      if (lastMaintenanceDate !== today) {
+        lastMaintenanceDate = today;
+        try {
+          const pruned = state.pruneOldJobs(settings.scan.processedJobRetainHours);
+          if (pruned > 0) {
+            logger.info('pruned old processed jobs', { removed: pruned });
+            await state.save();
+          }
+          await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+        } catch (err) {
+          logger.warn('daily maintenance failed (non-fatal)', { error: (err as Error).message });
         }
-        await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
-      } catch (err) {
-        logger.warn('daily maintenance failed (non-fatal)', { error: (err as Error).message });
       }
     }
 

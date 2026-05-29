@@ -6,8 +6,9 @@ export type AuthState = 'AUTHED' | 'PAUSED_AUTH';
 export interface ReAuthDeps {
   /** Throws LoginFailedError when the session is expired/absent. */
   ensureLoggedIn: () => Promise<void>;
-  /** Fire-and-forget notification (never throws). */
-  notify: (text: string, severity: 'info' | 'warn' | 'error') => Promise<void>;
+  /** Fire-and-forget notification (never throws). Any resolved value (e.g. a
+   *  delivered boolean) is ignored. */
+  notify: (text: string, severity: 'info' | 'warn' | 'error') => Promise<unknown>;
   logger: winston.Logger;
   /** Called once when transitioning AUTHED -> PAUSED_AUTH (e.g., health metric). */
   onPause?: () => void;

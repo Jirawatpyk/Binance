@@ -47,8 +47,12 @@ export class ReAuthManager {
             this.deps.logger.info('session recovered via token refresh');
             if (wasPaused) await this.deps.notify('Session restored (token auto-refreshed) — resuming', 'info');
             return true;
-          } catch {
-            // refresh did not actually restore a working session — fall through to pause
+          } catch (reverifyErr) {
+            // Only a genuine auth failure (token still bad after refresh) should
+            // fall through to pause. A transient/non-auth error during re-verify
+            // is a retryable tick error like any other — rethrow it (consistent
+            // with the outer catch's handling of non-LoginFailedError).
+            if (!(reverifyErr instanceof LoginFailedError)) throw reverifyErr;
           }
         }
         if (this.state === 'AUTHED') {

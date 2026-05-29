@@ -90,4 +90,37 @@ describe('ReAuthManager.ensureReady', () => {
     expect(ensureLoggedIn).toHaveBeenCalledTimes(2); // initial + re-verify, both throw
     expect(onPause).toHaveBeenCalledTimes(1);
   });
+
+  it('rethrows a non-auth error thrown during the post-refresh re-verify (does not pause)', async () => {
+    let calls = 0;
+    const ensureLoggedIn = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new LoginFailedError('expired');
+      throw new Error('network boom'); // re-verify hits a transient non-auth error
+    });
+    const tryRefresh = vi.fn(async () => true);
+    const onPause = vi.fn();
+    const mgr = new ReAuthManager({ ensureLoggedIn, notify: vi.fn(async () => {}), logger: noopLogger, onPause, tryRefresh });
+    await expect(mgr.ensureReady()).rejects.toThrow('network boom');
+    expect(onPause).not.toHaveBeenCalled(); // a transient error must NOT pause
+  });
+
+  it('notifies restore when recovering FROM a paused state via tryRefresh', async () => {
+    let healthy = false;
+    let refreshWorks = false;
+    const ensureLoggedIn = vi.fn(async () => { if (!healthy) throw new LoginFailedError('expired'); });
+    const tryRefresh = vi.fn(async () => { if (refreshWorks) { healthy = true; return true; } return false; });
+    const notify = vi.fn(async () => {});
+    const onPause = vi.fn();
+    const mgr = new ReAuthManager({ ensureLoggedIn, notify, logger: noopLogger, onPause, tryRefresh });
+    // tick 1: refresh can't recover yet → pause
+    expect(await mgr.ensureReady()).toBe(false);
+    expect(mgr.authState).toBe('PAUSED_AUTH');
+    // tick 2: refresh now restores the session
+    refreshWorks = true;
+    expect(await mgr.ensureReady()).toBe(true);
+    expect(mgr.authState).toBe('AUTHED');
+    expect(notify).toHaveBeenCalledTimes(2); // pause alert (tick1) + restore notice (tick2)
+    expect(notify).toHaveBeenLastCalledWith(expect.stringContaining('auto-refreshed'), 'info');
+  });
 });

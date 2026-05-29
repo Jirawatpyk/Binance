@@ -32,7 +32,7 @@ assignment:
 logging:
   level: info
   rotateDays: 14
-  screenshotRetainDays: 7        # delete error screenshots older than this
+  screenshotRetainDays: 5        # delete error screenshots older than this (5×200×~500KB ≈ 500MB worst-case, matches disk SLO)
   screenshotMaxPerDay: 200    # hard cap on error screenshots per day (disk-burst guard)
 
 reliability:

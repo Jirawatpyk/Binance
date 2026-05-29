@@ -76,14 +76,13 @@ export class Assigner {
 
     await assigneeBtn.click();
 
-    // Success closes the modal; that — together with the row leaving the Waiting
-    // tab below — is the authoritative confirmation of the assign. The Ant
-    // success-toast selector is unverified and never matched in practice, so we
-    // no longer block on it: a real assign previously wasted the full 15s toast
-    // timeout here before falling back to these same proofs. 12s (was 10s) gives
-    // a little headroom now that modal-hidden is the PRIMARY success signal
-    // rather than a fallback behind the toast wait; the modal-still-open check
-    // and row-cleared poll below remain the real proofs.
+    // On success the modal closes. The Ant success-toast selector is unverified
+    // and never matched in practice, so we no longer block on it: a real assign
+    // previously wasted the full 15s toast timeout here before falling back to
+    // these same proofs. 12s (was 10s) gives a little headroom now that this
+    // modal-hidden wait is the first gate rather than sitting behind the toast
+    // wait — but it is only a GATE (a still-open modal fails the assign below);
+    // the row-cleared poll is the authoritative positive proof.
     await modal.waitFor({ state: 'hidden', timeout: 12_000 }).catch(() => {});
     if (await modal.isVisible().catch(() => false)) {
       // Modal still open ⇒ the assign did not go through (error stayed in the dialog).
@@ -100,24 +99,34 @@ export class Assigner {
     // (expectClearedStatus), the assign did NOT take — fail so the caller
     // retries instead of silently recording a false success.
     await this.selectWaitingTab(false);
-    const stillWaitingRow = () =>
+    const countUncleared = () =>
       this.page
         .locator('table tbody tr')
         .filter({ hasText: language })
         .filter({ hasText: expectClearedStatus })
-        .count()
-        .catch(() => 0);
-    // Poll briefly: the Waiting list can take a moment to drop the assigned row.
-    // Succeed as soon as it clears rather than failing on one slow read (which
-    // would cause a needless retry + false failure metric).
-    let stillWaiting = await stillWaitingRow();
+        .count();
+    // Confirm success ONLY on a clean read of zero uncleared rows. The Waiting
+    // list can take a moment to drop the assigned row, so poll briefly. A read
+    // that THROWS (detached frame, mid-rerender) is "unknown", NOT "cleared" —
+    // we retry within the budget rather than mapping the error onto the success
+    // sentinel (0). If no clean zero-read lands in the window, fail so the caller
+    // retries instead of recording a read error (or a row that never cleared) as
+    // a false success.
+    let confirmed = false;
     const deadline = Date.now() + 3_000;
-    while (stillWaiting > 0 && Date.now() < deadline) {
+    while (Date.now() < deadline) {
+      try {
+        if ((await countUncleared()) === 0) {
+          confirmed = true;
+          break;
+        }
+      } catch {
+        // transient read error — retry after the brief wait below
+      }
       await this.page.waitForTimeout(300);
-      stillWaiting = await stillWaitingRow();
     }
-    if (stillWaiting > 0) {
-      throw new AssignmentFailedError(`row still ${expectClearedStatus} after assign — not confirmed`, {
+    if (!confirmed) {
+      throw new AssignmentFailedError(`row still ${expectClearedStatus} (or unconfirmed) after assign`, {
         language,
         role,
         assignee,

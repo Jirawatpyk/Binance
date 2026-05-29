@@ -21,6 +21,10 @@ interface HealthState {
   lastSuccessAt: string | null;
   lastAssignmentAt: string | null;
   consecutiveErrors: number;
+  // True once the consecutive-error alert has fired for the current streak.
+  // Persisted so a watchdog hard-exit / restart loop doesn't re-fire it every
+  // restart; cleared by recordTickSuccess when the streak ends.
+  errorAlerted: boolean;
   consecutiveZeroScans: number;
   today: TodayCounters;
   previousDay: TodayCounters | null; // the last completed day, stashed at rollover
@@ -47,6 +51,7 @@ export class HealthMonitor {
       lastSuccessAt: null,
       lastAssignmentAt: null,
       consecutiveErrors: 0,
+      errorAlerted: false,
       consecutiveZeroScans: 0,
       today: emptyToday(now),
       previousDay: null,
@@ -97,6 +102,7 @@ export class HealthMonitor {
 
   recordTickSuccess(now: Date = new Date()): void {
     this.state.consecutiveErrors = 0;
+    this.state.errorAlerted = false; // streak ended — re-arm the alert
     this.state.lastSuccessAt = now.toISOString();
   }
 
@@ -133,8 +139,17 @@ export class HealthMonitor {
   resetZeroScans(): void { this.state.consecutiveZeroScans = 0; }
   getConsecutiveZeroScans(): number { return this.state.consecutiveZeroScans; }
 
+  /** Fire the consecutive-error alert at most once per error streak: returns
+   *  true the first time the streak reaches `threshold`, then false until a
+   *  success re-arms it (recordTickSuccess). This consuming call records that the
+   *  alert fired (persisted), so a restart mid-streak doesn't re-alert and a
+   *  sustained outage doesn't produce an alert every Nth tick. */
   shouldAlertErrorRate(threshold: number): boolean {
-    return this.state.consecutiveErrors > 0 && this.state.consecutiveErrors % threshold === 0;
+    if (this.state.consecutiveErrors >= threshold && !this.state.errorAlerted) {
+      this.state.errorAlerted = true;
+      return true;
+    }
+    return false;
   }
 
   isDailySummaryDue(now: Date, summaryTime: string): boolean {

@@ -53,20 +53,42 @@ describe('HealthMonitor', () => {
     expect(monitor.snapshot().consecutiveErrors).toBe(0);
   });
 
-  it('shouldAlertErrorRate fires exactly when reaching threshold', () => {
+  it('shouldAlertErrorRate fires once at threshold then suppresses until recovery', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
     monitor.recordTickError(); // 1
     expect(monitor.shouldAlertErrorRate(3)).toBe(false);
     monitor.recordTickError(); // 2
     expect(monitor.shouldAlertErrorRate(3)).toBe(false);
-    monitor.recordTickError(); // 3
+    monitor.recordTickError(); // 3 — crosses threshold → fire once
     expect(monitor.shouldAlertErrorRate(3)).toBe(true);
-    monitor.recordTickError(); // 4
+    monitor.recordTickError(); // 4 — already alerted, no alert storm
     expect(monitor.shouldAlertErrorRate(3)).toBe(false);
     monitor.recordTickError(); // 5
     expect(monitor.shouldAlertErrorRate(3)).toBe(false);
-    monitor.recordTickError(); // 6
-    expect(monitor.shouldAlertErrorRate(3)).toBe(true); // re-fires at multiples
+    monitor.recordTickError(); // 6 — a multiple of 3, but must NOT re-fire (no alert storm)
+    expect(monitor.shouldAlertErrorRate(3)).toBe(false);
+    // A success ends the streak and re-arms the alert for the next one.
+    monitor.recordTickSuccess();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    expect(monitor.shouldAlertErrorRate(3)).toBe(true);
+  });
+
+  it('does not re-alert after a restart while the error streak is unbroken', async () => {
+    const { monitor, file } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    await monitor.load();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    expect(monitor.shouldAlertErrorRate(3)).toBe(true); // fires + records that it alerted
+    await monitor.save();
+
+    // A watchdog hard-exit / service restart reloads the persisted streak.
+    const m2 = new HealthMonitor(file, new Date(2026, 4, 7, 8, 5));
+    await m2.load();
+    expect(m2.snapshot().consecutiveErrors).toBe(3);
+    expect(m2.shouldAlertErrorRate(3)).toBe(false); // suppressed — already alerted before restart
   });
 
   it('rolls over counters on a new day', () => {

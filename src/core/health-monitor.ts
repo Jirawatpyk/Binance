@@ -33,8 +33,14 @@ function emptyToday(now: Date): TodayCounters {
 
 export class HealthMonitor {
   private state: HealthState;
+  // When THIS process started. Kept separate from state.startedAt (which load()
+  // overwrites with the persisted install time) so uptime reflects the current
+  // process — otherwise a watchdog hard-exit / restart loop would keep reporting
+  // an ever-growing "uptime" and hide the very failure it should surface.
+  private readonly processStartedAt: Date;
 
   constructor(private filePath: string, now: Date = new Date()) {
+    this.processStartedAt = now;
     this.state = {
       startedAt: now.toISOString(),
       lastTickAt: null,
@@ -146,7 +152,7 @@ export class HealthMonitor {
   dailySummaryStats(now: Date = new Date()): DailySummaryStats {
     const t = this.state.previousDay ?? this.state.today;
     const uptimeHours = Number(
-      ((now.getTime() - new Date(this.state.startedAt).getTime()) / 3_600_000).toFixed(1)
+      ((now.getTime() - this.processStartedAt.getTime()) / 3_600_000).toFixed(1)
     );
     return {
       date: t.date,

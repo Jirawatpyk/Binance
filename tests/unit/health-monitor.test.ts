@@ -139,6 +139,31 @@ describe('HealthMonitor', () => {
     expect(s.jobsAssigned).toBe(1);
   });
 
+  it('computes uptime from THIS process start, not the persisted install time', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
+    const file = path.join(dir, 'health.json');
+    // A health.json written by a prior install 10 days ago.
+    writeFileSync(
+      file,
+      JSON.stringify({
+        startedAt: '2026-05-01T00:00:00.000Z',
+        lastTickAt: null,
+        lastSuccessAt: null,
+        lastAssignmentAt: null,
+        consecutiveErrors: 0,
+        consecutiveZeroScans: 0,
+        today: { date: '2026-05-11', assigned: 0, jobsAssigned: 0, reviewed: 0, failed: 0, authEpisodes: 0, lo: 0, km: 0, ticks: 0 },
+        previousDay: null,
+        lastDailySummaryDate: null,
+      })
+    );
+    // This process started at 08:00 today.
+    const m = new HealthMonitor(file, new Date(2026, 4, 11, 8, 0));
+    await m.load();
+    // 09:00 → 1h since THIS process started, not ~240h since the install date.
+    expect(m.dailySummaryStats(new Date(2026, 4, 11, 9, 0)).uptimeHours).toBe(1);
+  });
+
   it('defaults jobsAssigned to 0 when loading a pre-jobsAssigned health.json', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
     const file = path.join(dir, 'health.json');

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { localDateString, isNewDay, isDailySummaryDue } from '../../src/core/health-utils.js';
+import { localDateString, isNewDay, isDailySummaryDue, summaryGapDays } from '../../src/core/health-utils.js';
 
 describe('localDateString', () => {
   it('formats local date as YYYY-MM-DD', () => {
@@ -42,5 +42,17 @@ describe('isDailySummaryDue', () => {
   it('catches up before the window if a full prior day was missed', () => {
     // last sent two days ago (bot was down across yesterday's window) — fire now
     expect(isDailySummaryDue(new Date(2026, 4, 9, 8, 0), '09:00', '2026-05-07')).toBe(true);
+  });
+});
+
+describe('summaryGapDays', () => {
+  it('is 0 when never sent', () => {
+    expect(summaryGapDays(null, new Date(2026, 4, 11, 9, 0))).toBe(0);
+  });
+  it('is 1 for a normal next-day summary (no gap)', () => {
+    expect(summaryGapDays('2026-05-10', new Date(2026, 4, 11, 9, 0))).toBe(1);
+  });
+  it('counts the days skipped across a multi-day outage', () => {
+    expect(summaryGapDays('2026-05-07', new Date(2026, 4, 11, 9, 0))).toBe(4);
   });
 });

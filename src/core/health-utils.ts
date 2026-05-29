@@ -33,3 +33,18 @@ export function isDailySummaryDue(
   const yesterday = localDateString(new Date(now.getTime() - 86_400_000));
   return lastSentDate !== null && lastSentDate < yesterday;
 }
+
+/**
+ * Whole days between `lastSentDate` (YYYY-MM-DD) and `now`. 0 when never sent, 1
+ * for a normal next-day summary, ≥2 when a multi-day outage skipped that many
+ * days' heartbeats. Used to label a catch-up heartbeat after a gap rather than
+ * presenting the last-completed-day figures as a normal daily summary.
+ */
+export function summaryGapDays(lastSentDate: string | null, now: Date): number {
+  if (!lastSentDate) return 0;
+  const toUtcMs = (s: string): number => {
+    const [y, m, d] = s.split('-').map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((toUtcMs(localDateString(now)) - toUtcMs(lastSentDate)) / 86_400_000);
+}

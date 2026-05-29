@@ -17,7 +17,7 @@ import { SheetsAssignmentLogger } from './integrations/google-sheets.js';
 import type { SupportedLanguage, Settings, TranslatorsConfig } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
-import { localDateString } from './core/health-utils.js';
+import { localDateString, summaryGapDays } from './core/health-utils.js';
 import { runWithWatchdog } from './core/watchdog.js';
 import { isBrowserDeadError, pruneCorruptBackups } from './core/recovery-utils.js';
 import path from 'path';
@@ -267,6 +267,12 @@ async function main(): Promise<void> {
     // the prod webhook is unconfigured or briefly down.
     if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
       const stats = health.dailySummaryStats();
+      // A gap ≥2 means the bot sent no heartbeat for ≥1 full day (an outage):
+      // the figures below are the last fully-recorded day BEFORE the gap, and the
+      // intermediate days have no summary. Flag that rather than letting the stale
+      // date read as a normal daily summary.
+      const lastSummary = health.snapshot().lastDailySummaryDate;
+      const gapDays = summaryGapDays(lastSummary, new Date());
       let delivered = await notifier.notifyDailySummary(stats);
       if (!delivered) delivered = await diagNotifier.notifyDailySummary(stats);
       if (delivered || (!notifier.isConfigured() && !diagNotifier.isConfigured())) {
@@ -275,6 +281,19 @@ async function main(): Promise<void> {
         health.markDailySummarySent();
       } else {
         logger.warn('daily heartbeat not delivered to any channel; will retry next tick');
+      }
+      if (gapDays >= 2) {
+        logger.warn('catch-up heartbeat after a multi-day gap', {
+          lastSummary,
+          gapDays,
+          reportedDay: stats.date,
+        });
+        await diagNotifier
+          .notify(
+            `Catch-up daily summary: no heartbeat for ~${gapDays} days. The figures (${stats.date}) are the last fully-recorded day before the gap; intermediate days have no summary.`,
+            'warn'
+          )
+          .catch(() => {});
       }
 
       // Daily maintenance — once per local day, independent of heartbeat

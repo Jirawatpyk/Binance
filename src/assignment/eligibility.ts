@@ -22,9 +22,11 @@ export function pendingRole(
 
 /**
  * May this role be assigned to this candidate? A `reviewOnly` candidate was
- * surfaced only by the decoupled review scan (created beyond the translation
- * window), so only its reviewer may be assigned — assigning a translator would
- * defeat the scan.lookbackHours backlog guard. Normal candidates allow any role.
+ * surfaced by the decoupled review scan AND is genuinely aged (created before the
+ * translation window), so only its reviewer may be assigned — assigning a
+ * translator would defeat the scan.lookbackHours backlog guard. A fresh job the
+ * translation scan merely missed is surfaced with reviewOnly=false and allows any
+ * role; normal translation candidates likewise allow any role.
  */
 export function canAssignRole(reviewOnly: boolean | undefined, role: AssignRole): boolean {
   return !reviewOnly || role === 'reviewer';

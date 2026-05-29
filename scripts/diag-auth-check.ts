@@ -4,9 +4,12 @@ import { createLogger } from '../src/core/logger.js';
 import { AuthSession } from '../src/auth/session.js';
 import { LoginFailedError } from '../src/core/errors.js';
 
-// Verify ensureLoggedIn() correctly detects an expired session. With the current
-// (expired) cookies.json this MUST throw LoginFailedError; before the fix it
-// wrongly returned a page. Usage: npx tsx scripts/diag-auth-check.ts
+// Verify ensureLoggedIn() correctly detects an expired session. With a GENUINELY
+// expired cookies.json (auth_token absent or its exp in the past) this MUST throw
+// LoginFailedError. Note: ensureLoggedIn now re-probes a few times and only
+// throws on a real EXPIRED classification — a transient /login bounce while the
+// token is still valid returns a page (no throw) by design, so run this only
+// against a truly dead session. Usage: npx tsx scripts/diag-auth-check.ts
 const settings = loadSettings(process.env.SETTINGS_PATH ?? './config/settings.yml');
 settings.browser.headless = true;
 const logger = createLogger({ level: 'warn', logsDir: settings.storage.logsDir, rotateDays: 1 });

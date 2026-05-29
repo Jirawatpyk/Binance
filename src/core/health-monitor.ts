@@ -46,6 +46,7 @@ function emptyToday(now: Date): TodayCounters {
 
 export class HealthMonitor {
   private state: HealthState;
+  private saveSeq = 0; // unique temp-file suffix so concurrent saves don't clobber a shared .tmp
   // When THIS process started. Kept separate from state.startedAt (which load()
   // overwrites with the persisted install time) so uptime reflects the current
   // process — otherwise a watchdog hard-exit / restart loop would keep reporting
@@ -232,7 +233,9 @@ export class HealthMonitor {
 
   async save(): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = this.filePath + '.tmp';
+    // Unique temp name per call so the watchdog hang-flush save can't race the
+    // still-running tick's save on a shared `${filePath}.tmp` (see StateStore.save).
+    const tmp = `${this.filePath}.${process.pid}.${this.saveSeq++}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(this.state, null, 2), 'utf-8');
     await fs.rename(tmp, this.filePath);
   }

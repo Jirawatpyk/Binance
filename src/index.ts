@@ -464,7 +464,16 @@ async function main(): Promise<void> {
         // Status-blind: a newly-claimable language is delayed up to
         // scan.fullRecheckCooldownMinutes, self-healing at expiry. Corrupt
         // timestamp → NaN → does not skip (fail-open toward doing work).
-        if (entry?.recheckAfter && Date.now() < new Date(entry.recheckAfter).getTime()) continue;
+        if (entry?.recheckAfter && Date.now() < new Date(entry.recheckAfter).getTime()) {
+          // Make the silent skip visible: otherwise a cooled candidate looks like
+          // the loop "stopped" after an earlier job, when it actually iterated here
+          // and skipped (re-opened to nothing assignable earlier → cooling down).
+          logger.info('skipping candidate — in recheck cooldown', {
+            jobId: job.id,
+            recheckAfter: entry.recheckAfter,
+          });
+          continue;
+        }
         if (settings.scan.detailPageDelayMs > 0) {
           await new Promise((r) => setTimeout(r, settings.scan.detailPageDelayMs));
         }

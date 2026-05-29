@@ -11,6 +11,9 @@ export interface ReAuthDeps {
   logger: winston.Logger;
   /** Called once when transitioning AUTHED -> PAUSED_AUTH (e.g., health metric). */
   onPause?: () => void;
+  /** Optional: try to auto-renew the session (returns true on success). Attempted
+   *  once before pausing, to recover a session that expired while the bot was down. */
+  tryRefresh?: () => Promise<boolean>;
 }
 
 export class ReAuthManager {
@@ -34,6 +37,20 @@ export class ReAuthManager {
       return true;
     } catch (err) {
       if (err instanceof LoginFailedError) {
+        // Before pausing, try to auto-renew (recovers a session that expired
+        // while the bot was down, without a manual capture-cookies).
+        if (this.deps.tryRefresh && (await this.deps.tryRefresh())) {
+          try {
+            await this.deps.ensureLoggedIn(); // re-verify with the refreshed token
+            const wasPaused = this.state === 'PAUSED_AUTH';
+            this.state = 'AUTHED';
+            this.deps.logger.info('session recovered via token refresh');
+            if (wasPaused) await this.deps.notify('Session restored (token auto-refreshed) — resuming', 'info');
+            return true;
+          } catch {
+            // refresh did not actually restore a working session — fall through to pause
+          }
+        }
         if (this.state === 'AUTHED') {
           this.state = 'PAUSED_AUTH';
           this.deps.onPause?.();

@@ -48,4 +48,46 @@ describe('ReAuthManager.ensureReady', () => {
     const { mgr } = make(async () => { throw new Error('network boom'); });
     await expect(mgr.ensureReady()).rejects.toThrow('network boom');
   });
+
+  it('recovers via tryRefresh without pausing when refresh restores the session', async () => {
+    let calls = 0;
+    const ensureLoggedIn = vi.fn(async () => {
+      calls += 1;
+      if (calls === 1) throw new LoginFailedError('expired');
+      // second call (post-refresh re-verify) succeeds
+    });
+    const tryRefresh = vi.fn(async () => true);
+    const notify = vi.fn(async () => {});
+    const onPause = vi.fn();
+    const mgr = new ReAuthManager({ ensureLoggedIn, notify, logger: noopLogger, onPause, tryRefresh });
+    expect(await mgr.ensureReady()).toBe(true);
+    expect(mgr.authState).toBe('AUTHED');
+    expect(tryRefresh).toHaveBeenCalledTimes(1);
+    expect(ensureLoggedIn).toHaveBeenCalledTimes(2); // initial throw + re-verify
+    expect(onPause).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled(); // was AUTHED, not paused → no restore notice
+  });
+
+  it('pauses when tryRefresh fails', async () => {
+    const ensureLoggedIn = vi.fn(async () => { throw new LoginFailedError('expired'); });
+    const tryRefresh = vi.fn(async () => false);
+    const notify = vi.fn(async () => {});
+    const onPause = vi.fn();
+    const mgr = new ReAuthManager({ ensureLoggedIn, notify, logger: noopLogger, onPause, tryRefresh });
+    expect(await mgr.ensureReady()).toBe(false);
+    expect(mgr.authState).toBe('PAUSED_AUTH');
+    expect(tryRefresh).toHaveBeenCalledTimes(1);
+    expect(onPause).toHaveBeenCalledTimes(1);
+  });
+
+  it('pauses when tryRefresh succeeds but the re-verify still fails', async () => {
+    const ensureLoggedIn = vi.fn(async () => { throw new LoginFailedError('expired'); });
+    const tryRefresh = vi.fn(async () => true);
+    const onPause = vi.fn();
+    const mgr = new ReAuthManager({ ensureLoggedIn, notify: vi.fn(async () => {}), logger: noopLogger, onPause, tryRefresh });
+    expect(await mgr.ensureReady()).toBe(false);
+    expect(mgr.authState).toBe('PAUSED_AUTH');
+    expect(ensureLoggedIn).toHaveBeenCalledTimes(2); // initial + re-verify, both throw
+    expect(onPause).toHaveBeenCalledTimes(1);
+  });
 });

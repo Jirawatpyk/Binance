@@ -195,6 +195,9 @@ async function main(): Promise<void> {
       : async () => {},
     logger,
     onPause: () => health.recordAuthEpisode(),
+    // Auto-renew before giving up: recovers a session that expired while the bot
+    // was down (refresh_token still valid). Gated by the autoRenew config knob.
+    tryRefresh: settings.reliability.reauth.autoRenew ? () => session.refreshAccessToken() : undefined,
   });
 
   const tick = async (): Promise<void> => {
@@ -483,7 +486,7 @@ async function main(): Promise<void> {
       //  1) Persist the current session so any JWT the app refreshed this tick
       //     survives a restart (the stale-snapshot-on-restart problem).
       //  2) Warn before the token expires so it can be refreshed proactively.
-      const expMs = await session.getAuthExpiryMs().catch((e) => {
+      let expMs = await session.getAuthExpiryMs().catch((e) => {
         logger.debug('reading auth token expiry failed', { error: (e as Error).message });
         return null;
       });
@@ -505,11 +508,29 @@ async function main(): Promise<void> {
       } else {
         expiryReadFailedAlerted = false; // recovered — re-arm
 
-        // Persist only when the token is live, so we never overwrite the
-        // last-known-good cookies.json with a dead/unparseable snapshot. A
-        // single failure is swallowed; a sustained one is alerted (it silently
-        // reintroduces the stale-snapshot bug this save exists to prevent).
-        if (expMs > Date.now()) {
+        // Proactive auto-renew: when the access token is within
+        // refreshThresholdMin of expiry, renew it now so the session never dies.
+        // refreshAccessToken persists the rotated tokens itself (so skip the
+        // saveSession below on success). On success, re-read the expiry so this
+        // tick's pre-expiry warning sees the fresh token and stays quiet.
+        let refreshed = false;
+        if (
+          settings.reliability.reauth.autoRenew &&
+          (expMs - Date.now()) / 60_000 <= settings.reliability.reauth.refreshThresholdMin
+        ) {
+          refreshed = await session.refreshAccessToken();
+          if (refreshed) {
+            const newExp = await session.getAuthExpiryMs().catch(() => null);
+            if (newExp !== null) expMs = newExp;
+          }
+        }
+
+        // Persist only when the token is live AND we didn't just refresh+persist,
+        // so we never overwrite the last-known-good cookies.json with a dead/
+        // unparseable snapshot. A single failure is swallowed; a sustained one is
+        // alerted (it silently reintroduces the stale-snapshot bug this save
+        // exists to prevent).
+        if (!refreshed && expMs > Date.now()) {
           try {
             await session.saveSession();
             consecutiveSaveFailures = 0;

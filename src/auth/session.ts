@@ -186,10 +186,16 @@ export class AuthSession {
         }
       })
       .catch(() => false);
+    let raceTimer: ReturnType<typeof setTimeout> | undefined;
     const ok = await Promise.race([
       evaluatePromise,
-      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 15_000)),
+      new Promise<boolean>((resolve) => {
+        raceTimer = setTimeout(() => resolve(false), 15_000);
+      }),
     ]);
+    // Clear the backstop timer when the evaluate wins, so it doesn't keep the
+    // event loop alive for up to 15s in this long-lived process.
+    if (raceTimer) clearTimeout(raceTimer);
     if (ok) {
       // Persist the rotated tokens NOW (best-effort) so an on-expiry refresh isn't
       // lost if a later step in this tick throws. Failure is logged at error (not

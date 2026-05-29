@@ -55,4 +55,9 @@ describe('summaryGapDays', () => {
   it('counts the days skipped across a multi-day outage', () => {
     expect(summaryGapDays('2026-05-07', new Date(2026, 4, 11, 9, 0))).toBe(4);
   });
+  it('counts the gap correctly across a month boundary', () => {
+    // Apr 30 → May 1 is 1 day; exercises the Date.UTC(y, m-1, d) month math.
+    expect(summaryGapDays('2026-04-30', new Date(2026, 4, 1, 9, 0))).toBe(1);
+    expect(summaryGapDays('2026-04-28', new Date(2026, 4, 2, 9, 0))).toBe(4);
+  });
 });

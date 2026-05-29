@@ -152,7 +152,10 @@ async function main(): Promise<void> {
   await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
   // Bound *.corrupt.* backups — especially relevant here since a corrupt file
   // was just recovered above if stateRecovered/healthRecovered fired.
-  await pruneCorruptBackups(path.dirname(settings.storage.statePath), 5).catch(() => 0);
+  await pruneCorruptBackups(path.dirname(settings.storage.statePath), 5).catch((err) => {
+    logger.warn('startup corrupt-backup prune failed (non-fatal)', { error: (err as Error).message });
+    return 0;
+  });
   // Count startup maintenance as today's run so the first tick doesn't repeat it.
   lastMaintenanceDate = localDateString(new Date());
 
@@ -279,21 +282,26 @@ async function main(): Promise<void> {
         // Confirmed delivery, or no webhook configured at all (log-only
         // deployment — nothing to deliver, so don't retry every tick forever).
         health.markDailySummarySent();
+        // Catch-up notice fires HERE (only when the heartbeat is actually marked
+        // sent) so a multi-day delivery outage — during which markDailySummarySent
+        // is skipped and isDailySummaryDue stays true every tick — doesn't fire
+        // this notice on every cycle. It surfaces once, alongside the delivered
+        // catch-up heartbeat.
+        if (gapDays >= 2) {
+          logger.warn('catch-up heartbeat after a multi-day gap', {
+            lastSummary,
+            gapDays,
+            reportedDay: stats.date,
+          });
+          await diagNotifier
+            .notify(
+              `Catch-up daily summary: no heartbeat for ~${gapDays} days. The figures (${stats.date}) are the last fully-recorded day before the gap; intermediate days have no summary.`,
+              'warn'
+            )
+            .catch(() => {});
+        }
       } else {
         logger.warn('daily heartbeat not delivered to any channel; will retry next tick');
-      }
-      if (gapDays >= 2) {
-        logger.warn('catch-up heartbeat after a multi-day gap', {
-          lastSummary,
-          gapDays,
-          reportedDay: stats.date,
-        });
-        await diagNotifier
-          .notify(
-            `Catch-up daily summary: no heartbeat for ~${gapDays} days. The figures (${stats.date}) are the last fully-recorded day before the gap; intermediate days have no summary.`,
-            'warn'
-          )
-          .catch(() => {});
       }
 
       // Daily maintenance — once per local day, independent of heartbeat
@@ -410,6 +418,7 @@ async function main(): Promise<void> {
       // assignments (see the recordTickSuccess gate after the loop).
       let processingAttempts = 0;
       let processingFailures = 0;
+      let deferredOnBudget = false;
       for (const [candidateIndex, job] of candidates.entries()) {
         if (Date.now() - tickStart > workBudgetMs) {
           logger.warn('tick work budget exceeded; deferring remaining candidates to next tick', {
@@ -417,6 +426,7 @@ async function main(): Promise<void> {
             elapsedMs: Date.now() - tickStart,
             workBudgetMs,
           });
+          deferredOnBudget = true;
           break;
         }
         const entry = state.getProcessedEntry(job.id);
@@ -611,7 +621,10 @@ async function main(): Promise<void> {
       // "successful" with zero assignments and never trip the consecutive-error
       // alert — the per-job catch only notifies diagnostics. Count it as a tick
       // error so it escalates through the same detector as other failures.
-      if (processingAttempts > 0 && processingFailures === processingAttempts) {
+      // Only escalate when we processed the WHOLE candidate set and every job
+      // failed (systematic breakage). If we broke early on the work budget we
+      // only sampled a prefix, so an all-failed prefix isn't evidence of drift.
+      if (!deferredOnBudget && processingAttempts > 0 && processingFailures === processingAttempts) {
         health.recordTickError();
         logger.error('all opened candidates failed to process — possible detail-page selector drift', {
           attempts: processingAttempts,
@@ -649,10 +662,11 @@ async function main(): Promise<void> {
 
         // Proactive auto-renew: when the access token is within
         // refreshThresholdMin of expiry, renew it now so the session never dies.
-        // refreshAccessToken only writes the rotated tokens to localStorage; the
-        // single counted save below persists them. On success, re-read the expiry
-        // so the pre-expiry warning (gated on !refreshed below) reflects the fresh
-        // token.
+        // refreshAccessToken persists the rotated tokens to cookies.json itself;
+        // the counted save below is a backstop that also covers a normal tick
+        // (app-refreshed JWT) and surfaces a sustained persist failure via the
+        // counter + alert. On success, re-read the expiry so the pre-expiry
+        // warning (gated on !refreshed below) reflects the fresh token.
         let refreshed = false;
         if (
           settings.reliability.reauth.autoRenew &&

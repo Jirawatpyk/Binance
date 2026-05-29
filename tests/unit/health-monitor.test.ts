@@ -75,6 +75,16 @@ describe('HealthMonitor', () => {
     expect(monitor.shouldAlertErrorRate(3)).toBe(true);
   });
 
+  it('fires on the first check even when the streak already overshot the threshold', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    // Streak climbs to 5 before shouldAlertErrorRate is ever consulted — the
+    // old `% threshold === 0` logic would MISS this (5 % 3 !== 0); `>= threshold`
+    // must still fire.
+    for (let i = 0; i < 5; i++) monitor.recordTickError();
+    expect(monitor.shouldAlertErrorRate(3)).toBe(true);
+    expect(monitor.shouldAlertErrorRate(3)).toBe(false); // one-shot after firing
+  });
+
   it('does not re-alert after a restart while the error streak is unbroken', async () => {
     const { monitor, file } = newMonitor(new Date(2026, 4, 7, 8, 0));
     await monitor.load();

@@ -63,7 +63,7 @@ describe('buildAssignmentSummaryCard', () => {
         },
       ])
     );
-    expect(c.card.header.title).toBe('✅ Assigned 2 jobs');
+    expect(c.card.header.title).toBe('✅ Translator assigned — 2 jobs');
     // 1 + 2 language assignments; 34 + 7 words
     expect(c.card.header.subtitle).toBe('3 assignments  ·  41 words');
   });
@@ -105,7 +105,7 @@ describe('buildAssignmentSummaryCard', () => {
         { jobId: '999', name: 'Solo', wordCount: 1000, assigned: { 'lo-LA': 'a@eqho.com' } },
       ])
     );
-    expect(c.card.header.title).toBe('✅ Assigned 1 job');
+    expect(c.card.header.title).toBe('✅ Translator assigned — 1 job');
     expect(c.card.header.subtitle).toBe('1 assignment  ·  1,000 words');
   });
 

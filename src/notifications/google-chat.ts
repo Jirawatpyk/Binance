@@ -118,7 +118,7 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
         cardId: `assign-${Date.now()}`,
         card: {
           header: {
-            title: `✅ Assigned ${jobs.length} job${plural}`,
+            title: `✅ Translator assigned — ${jobs.length} job${plural}`,
             subtitle: `${totalAssignments} assignment${totalAssignments === 1 ? '' : 's'}  ·  ${totalWords.toLocaleString('en-US')} words`,
           },
           sections: [{ widgets }],

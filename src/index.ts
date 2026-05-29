@@ -220,7 +220,7 @@ async function main(): Promise<void> {
   // path (auth gate, browser recycle/recovery, work) feeds the same detector
   // rather than only the work-phase catch.
   const maybeAlertErrorRate = async (): Promise<void> => {
-    if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
+    if (health.consumeErrorRateAlert(settings.reliability.monitoring.consecutiveErrorAlert)) {
       await diagNotifier
         .notify(
           `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,

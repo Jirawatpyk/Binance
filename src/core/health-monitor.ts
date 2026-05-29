@@ -160,12 +160,13 @@ export class HealthMonitor {
   resetZeroScans(): void { this.state.consecutiveZeroScans = 0; }
   getConsecutiveZeroScans(): number { return this.state.consecutiveZeroScans; }
 
-  /** Fire the consecutive-error alert at most once per error streak: returns
-   *  true the first time the streak reaches `threshold`, then false until a
-   *  success re-arms it (recordTickSuccess). This consuming call records that the
-   *  alert fired (persisted), so a restart mid-streak doesn't re-alert and a
-   *  sustained outage doesn't produce an alert every Nth tick. */
-  shouldAlertErrorRate(threshold: number): boolean {
+  /** Consume the consecutive-error alert: returns true at most once per error
+   *  streak — the first time the streak reaches `threshold` — then false until a
+   *  success re-arms it (recordTickSuccess). NOTE this is a command, not a pure
+   *  predicate: a `true` return records (and persists) that the alert fired, so a
+   *  restart mid-streak doesn't re-alert and a sustained outage doesn't produce an
+   *  alert every Nth tick. Call exactly once per failing tick, only to send. */
+  consumeErrorRateAlert(threshold: number): boolean {
     if (this.state.consecutiveErrors >= threshold && !this.state.errorAlerted) {
       this.state.errorAlerted = true;
       return true;

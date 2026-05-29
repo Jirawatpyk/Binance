@@ -390,6 +390,12 @@ async function main(): Promise<void> {
       // same backlog → crash loop). Deferred candidates are re-surfaced next
       // tick; this tick's progress is persisted in the finally below.
       const workBudgetMs = settings.reliability.watchdog.tickTimeoutMs * 0.7;
+      // Track how many candidates we actually opened vs how many threw while
+      // processing, so a tick where EVERY opened job fails (systematic detail-
+      // page selector drift) escalates instead of ending "successful" with zero
+      // assignments (see the recordTickSuccess gate after the loop).
+      let processingAttempts = 0;
+      let processingFailures = 0;
       for (const [candidateIndex, job] of candidates.entries()) {
         if (Date.now() - tickStart > workBudgetMs) {
           logger.warn('tick work budget exceeded; deferring remaining candidates to next tick', {
@@ -439,6 +445,7 @@ async function main(): Promise<void> {
           await new Promise((r) => setTimeout(r, settings.scan.detailPageDelayMs));
         }
         try {
+          processingAttempts += 1;
           logger.info('processing job', { jobId: job.id, name: job.name });
           const detail = await processor.open(job.detailUrl, job.id);
           const assigned: Partial<Record<SupportedLanguage, string>> = {};
@@ -579,12 +586,26 @@ async function main(): Promise<void> {
           }
         } catch (err) {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
+          processingFailures += 1;
           logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
           await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
           await diagNotifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
-      health.recordTickSuccess();
+      // If every candidate we opened threw while processing (systematic detail-
+      // page breakage, e.g. selector drift) the tick would otherwise end
+      // "successful" with zero assignments and never trip the consecutive-error
+      // alert — the per-job catch only notifies diagnostics. Count it as a tick
+      // error so it escalates through the same detector as other failures.
+      if (processingAttempts > 0 && processingFailures === processingAttempts) {
+        health.recordTickError();
+        logger.error('all opened candidates failed to process — possible detail-page selector drift', {
+          attempts: processingAttempts,
+        });
+        await maybeAlertErrorRate();
+      } else {
+        health.recordTickSuccess();
+      }
 
       // Session maintenance (best-effort; never fail the tick):
       //  1) Persist the current session so any JWT the app refreshed this tick

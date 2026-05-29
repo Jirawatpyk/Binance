@@ -367,18 +367,65 @@ export class JobScanner {
     this.logger.debug('language filter set', { lang });
   }
 
-  /** Click the Search button and wait for the table to update. */
+  /**
+   * Read the id signature (sorted, comma-joined) of the data rows currently
+   * rendered in the table. Same row shape as parseRows (≥10 cells, numeric
+   * cells[1]) so clickSearch can tell when the table has actually re-rendered to
+   * a new filter's results vs. still showing the previous language's rows.
+   */
+  private async currentRowIdSignature(): Promise<string> {
+    return this.page.evaluate(() => {
+      const ids: string[] = [];
+      for (const row of Array.from(document.querySelectorAll('table tbody tr, [role="row"]'))) {
+        const cells = row.querySelectorAll('td, [role="cell"]');
+        if (cells.length < 10) continue;
+        const idText = (cells[1]?.textContent ?? '').trim();
+        if (/^\d+$/.test(idText)) ids.push(idText);
+      }
+      return ids.sort().join(',');
+    });
+  }
+
+  /** Click the Search button and wait for the table to actually reflect the new filter. */
   private async clickSearch(): Promise<void> {
     const searchBtn = this.page.locator('button').filter({ hasText: /^Search$/ }).first();
     if (!(await searchBtn.isVisible({ timeout: 5_000 }).catch(() => false))) {
       throw new Error('clickSearch: Search button not visible — page structure may have changed');
     }
+    // Capture the table BEFORE searching. The spinner-hidden wait below returns
+    // while the PREVIOUS filter's rows are still painted (the Ant table re-renders
+    // a beat after the spinner clears, and a fast/cached query may not re-show the
+    // spinner at all), so reading immediately parses the prior language's rows —
+    // this is the bug where the review lo-LA pass read leftover km-KH rows.
+    const beforeSig = await this.currentRowIdSignature();
     await searchBtn.click();
     await this.page.waitForLoadState('networkidle', { timeout: 10_000 }).catch(() => {
       // Table may update client-side without network activity — continue
     });
     // Wait for the spinner to disappear (Ant Design shows .ant-spin-spinning while loading)
     await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 10_000 }).catch(() => {});
+    // Then wait until the visible row-id set actually differs from the pre-search
+    // table — i.e. the new filter's results have landed — instead of a fixed delay
+    // that can read the still-stale (previous-language) rows. A genuinely unchanged
+    // result set (same filter re-run) or a stable empty board never differs and
+    // falls through on timeout, reading the correct rows anyway. Mirrors the
+    // id-signature wait collectAllPages already uses for pagination.
+    await this.page
+      .waitForFunction(
+        (prevSig) => {
+          const ids: string[] = [];
+          for (const row of Array.from(document.querySelectorAll('table tbody tr, [role="row"]'))) {
+            const cells = row.querySelectorAll('td, [role="cell"]');
+            if (cells.length < 10) continue;
+            const idText = (cells[1]?.textContent ?? '').trim();
+            if (/^\d+$/.test(idText)) ids.push(idText);
+          }
+          return ids.sort().join(',') !== prevSig;
+        },
+        beforeSig,
+        { timeout: 5_000 }
+      )
+      .catch(() => {});
     await this.page.waitForTimeout(300);
   }
 

@@ -383,7 +383,22 @@ async function main(): Promise<void> {
       // that simply returns no rows still trips the zero-scan alert above);
       // setDateFilter/pagination failures fire their own onAlert. The daily
       // summary's "Reviews assigned" line adds right-cadence visibility.
-      for (const job of candidates) {
+      // Soft work budget: stop opening NEW candidates once most of the watchdog
+      // window is used, so a slow-but-progressing tick (TMS latency / retry
+      // storm) defers the rest to the next tick instead of being hard-killed
+      // mid-work by the watchdog (which would restart the process and re-scan the
+      // same backlog → crash loop). Deferred candidates are re-surfaced next
+      // tick; this tick's progress is persisted in the finally below.
+      const workBudgetMs = settings.reliability.watchdog.tickTimeoutMs * 0.7;
+      for (const [candidateIndex, job] of candidates.entries()) {
+        if (Date.now() - tickStart > workBudgetMs) {
+          logger.warn('tick work budget exceeded; deferring remaining candidates to next tick', {
+            deferred: candidates.length - candidateIndex,
+            elapsedMs: Date.now() - tickStart,
+            workBudgetMs,
+          });
+          break;
+        }
         const entry = state.getProcessedEntry(job.id);
         // Skip only jobs we've given up on. Do NOT skip FULL jobs in general: a
         // job's lo-LA and km-KH rows can become claimable at different times, and

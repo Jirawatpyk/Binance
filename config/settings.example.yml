@@ -37,7 +37,16 @@ logging:
 
 reliability:
   watchdog:
-    tickTimeoutMs: 900000        # 15 min — headroom for worst-case real-assign tick (25 jobs) + retries
+    # Hard hang-detector: if a tick doesn't settle within this, the process
+    # hard-exits for the service to restart. The tick ALSO enforces a soft work
+    # budget (70% of this value): once exceeded it stops opening NEW candidates
+    # and defers the rest to the next tick, so a slow-but-progressing tick (TMS
+    # latency / retry storm) is never hard-killed mid-work. Worst-case derivation
+    # for the headroom: maxCandidatesPerTick(25) is bounded by the 70% budget
+    # (~14 min), leaving ~6 min for one in-flight job's retries
+    # (maxRetries 3 × exponential backoff 5+10+20s ≈ 35s per language + Ant waits)
+    # to finish before the hard kill.
+    tickTimeoutMs: 1200000       # 20 min
   reauth:
     alertOnExpiry: true
     # Auto-renew the TMS access token via the stored refresh_token (no manual

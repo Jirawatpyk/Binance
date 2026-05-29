@@ -736,15 +736,22 @@ async function main(): Promise<void> {
 
   const guardedTick = (): Promise<void> =>
     runWithWatchdog(tick, settings.reliability.watchdog.tickTimeoutMs, () => {
-      logger.error('tick hung beyond watchdog timeout; exiting for service restart', {
+      logger.error('tick hung beyond watchdog timeout; flushing and exiting for service restart', {
         tickTimeoutMs: settings.reliability.watchdog.tickTimeoutMs,
       });
-      // Hard-exit safety net: fires even if notify hangs in a wedged event loop.
+      // Hard-exit safety net: fires even if a flush/notify hangs in a wedged
+      // event loop, so the process always exits for the service to restart.
       setTimeout(() => process.exit(1), 6_000).unref();
-      void diagNotifier
-        .notify('Bot tick hung — exiting for auto-restart', 'error')
-        .catch(() => {})
-        .finally(() => process.exit(1));
+      // Best-effort flush of in-flight mutations before the hard exit — a hang
+      // otherwise drops this tick's processed/abandoned status, round-robin
+      // counters, and health metrics (the end-of-tick saves never run). The
+      // saves are plain atomic fs writes, independent of the wedged browser, and
+      // the 6s backstop above bounds them.
+      void Promise.allSettled([
+        state.save().catch((e) => logger.error('flush state.save failed on hang', { error: (e as Error).message })),
+        health.save().catch((e) => logger.error('flush health.save failed on hang', { error: (e as Error).message })),
+        diagNotifier.notify('Bot tick hung — exiting for auto-restart', 'error').catch(() => {}),
+      ]).finally(() => process.exit(1));
     });
 
   const scheduler = new Scheduler(

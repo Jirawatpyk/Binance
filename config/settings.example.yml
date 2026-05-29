@@ -1,5 +1,5 @@
 polling:
-  intervalMinutes: 3
+  intervalMinutes: 1.5   # poll every ~90s for lower new-job latency; the single load/latency dial — raise toward 2 if scans turn flaky
   jitterSeconds: 30
 
 scan:

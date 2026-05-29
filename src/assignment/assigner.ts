@@ -75,16 +75,16 @@ export class Assigner {
     }
 
     await assigneeBtn.click();
-    // The Ant success toast selector is unverified against a real assign, so it
-    // is only a fast-path hint — never the sole proof of success.
-    const sawToast = await this.page
-      .locator('.ant-message-success, .ant-notification-notice-success')
-      .first()
-      .waitFor({ state: 'visible', timeout: 15_000 })
-      .then(() => true)
-      .catch(() => false);
 
-    await modal.waitFor({ state: 'hidden', timeout: 10_000 }).catch(() => {});
+    // Success closes the modal; that — together with the row leaving the Waiting
+    // tab below — is the authoritative confirmation of the assign. The Ant
+    // success-toast selector is unverified and never matched in practice, so we
+    // no longer block on it: a real assign previously wasted the full 15s toast
+    // timeout here before falling back to these same proofs. 12s (was 10s) gives
+    // a little headroom now that modal-hidden is the PRIMARY success signal
+    // rather than a fallback behind the toast wait; the modal-still-open check
+    // and row-cleared poll below remain the real proofs.
+    await modal.waitFor({ state: 'hidden', timeout: 12_000 }).catch(() => {});
     if (await modal.isVisible().catch(() => false)) {
       // Modal still open ⇒ the assign did not go through (error stayed in the dialog).
       throw new AssignmentFailedError('modal still open after assign', {
@@ -95,10 +95,10 @@ export class Assigner {
       });
     }
 
-    // Positive verification independent of the unverified toast: on a real
-    // assign the row leaves the Waiting tab. Re-read it; if a row for this
-    // language is still WAITING_TRANSLATION, the assign did NOT take — fail so
-    // the caller retries instead of silently recording a false success.
+    // Positive verification: on a real assign the row leaves the Waiting tab.
+    // Re-read it; if a row for this language is still in the uncleared status
+    // (expectClearedStatus), the assign did NOT take — fail so the caller
+    // retries instead of silently recording a false success.
     await this.selectWaitingTab(false);
     const stillWaitingRow = () =>
       this.page
@@ -129,7 +129,7 @@ export class Assigner {
       language,
       role,
       assignee,
-      confirmedBy: sawToast ? 'toast' : 'row-cleared',
+      confirmedBy: 'row-cleared',
     });
   }
 }

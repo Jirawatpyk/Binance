@@ -19,7 +19,8 @@ import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
 import { localDateString } from './core/health-utils.js';
 import { runWithWatchdog } from './core/watchdog.js';
-import { isBrowserDeadError } from './core/recovery-utils.js';
+import { isBrowserDeadError, pruneCorruptBackups } from './core/recovery-utils.js';
+import path from 'path';
 import { TranslatorNotFoundError } from './core/errors.js';
 import { pendingRole, canAssignRole } from './assignment/eligibility.js';
 import { classifyOutcome } from './assignment/outcome.js';
@@ -149,6 +150,9 @@ async function main(): Promise<void> {
     await state.save();
   }
   await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+  // Bound *.corrupt.* backups — especially relevant here since a corrupt file
+  // was just recovered above if stateRecovered/healthRecovered fired.
+  await pruneCorruptBackups(path.dirname(settings.storage.statePath), 5).catch(() => 0);
   // Count startup maintenance as today's run so the first tick doesn't repeat it.
   lastMaintenanceDate = localDateString(new Date());
 
@@ -285,6 +289,8 @@ async function main(): Promise<void> {
             await state.save();
           }
           await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+          const removedBackups = await pruneCorruptBackups(path.dirname(settings.storage.statePath), 5);
+          if (removedBackups > 0) logger.info('pruned old .corrupt.* backups', { removed: removedBackups });
         } catch (err) {
           logger.warn('daily maintenance failed (non-fatal)', { error: (err as Error).message });
         }

@@ -37,7 +37,21 @@ export class JobProcessor {
       // that has assignable rows means the selector likely missed the value.
       this.logger.warn('word count parsed as 0/NaN despite assignable rows — check selector', { jobId, wordCount });
     }
-    this.logger.info('job detail parsed', { jobId, wordCount, languages: languages.map((l) => l.code) });
+    // Log per-row status + whether a translator/reviewer is already set (booleans,
+    // not the emails) so a later "no assignable rows" is diagnosable: pendingRole
+    // assigns a translator only on status WAITING_TRANSLATION with no translator,
+    // a reviewer only on WAITING_REVIEW with no reviewer — this shows exactly why
+    // a row was (or wasn't) eligible.
+    this.logger.info('job detail parsed', {
+      jobId,
+      wordCount,
+      languages: languages.map((l) => ({
+        code: l.code,
+        status: l.status,
+        hasTranslator: l.translator !== null,
+        hasReviewer: l.reviewer !== null,
+      })),
+    });
     return { jobId, wordCount, targetLanguages: languages };
   }
 

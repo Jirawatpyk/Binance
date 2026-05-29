@@ -132,7 +132,7 @@ export class JobScanner {
     // hides (their rows may still be WAITING_REVIEW — resolved per-row later by
     // the tick loop). Deduped against ALL translation candidates found this tick
     // (jobMap, including any truncated above) so a job is never both.
-    const reviewCandidates = await this.scanForReview(jobMap);
+    const reviewCandidates = await this.scanForReview(jobMap, createdFrom);
 
     const all = [...candidates, ...reviewCandidates];
     this.logger.info('job scan complete', {
@@ -147,14 +147,16 @@ export class JobScanner {
    * Second scan pass for jobs that need a REVIEWER. Uses a wider Created window
    * (reviewScan.lookbackHours) than the translation pass so jobs that reached
    * WAITING_REVIEW days after creation are still found, but only for languages
-   * with a configured reviewer. Results are tagged reviewOnly so the tick loop
-   * assigns a reviewer (never a translator) to them. Returns [] when no
+   * with a configured reviewer. Aged results (created before the translation
+   * window) are tagged reviewOnly so the tick loop assigns a reviewer but never a
+   * translator; a fresh job the translation pass merely missed this tick is tagged
+   * reviewOnly=false so it can still be translated. Returns [] when no
    * reviewScan was provided. Deduped against the translation candidates and
    * filtered by the state-backed skip predicate; newest (highest id) first so the
    * recently-translated jobs that actually need review win the per-tick cap ahead
    * of aged backlog that merely shares the lo-LA board filter.
    */
-  private async scanForReview(translationMap: Map<string, Job>): Promise<Job[]> {
+  private async scanForReview(translationMap: Map<string, Job>, translationCutoff: Date): Promise<Job[]> {
     const rs = this.reviewScan;
     if (!rs || rs.languages.length === 0) return [];
 
@@ -188,7 +190,12 @@ export class JobScanner {
     // filter + reviewOnly tag + newest-first sort (unit-tested in
     // review-candidates.test.ts). The cap is applied here so the truncation is
     // logged for the operator.
-    const selected = selectReviewCandidates(found, new Set(translationMap.keys()), rs.isSkippable);
+    const selected = selectReviewCandidates(
+      found,
+      new Set(translationMap.keys()),
+      rs.isSkippable,
+      translationCutoff.getTime()
+    );
     if (selected.length > rs.maxCandidatesPerTick) {
       this.logger.warn('review candidate count exceeds cap; truncating', {
         found: selected.length,
@@ -548,6 +555,9 @@ export class JobScanner {
       languagesNeeded: r.languagesNeeded,
       wordCount: r.wordCount,
       detailUrl: r.detailUrl,
+      // Parse the board's Created column (UTC) for the reviewOnly age check; null
+      // when unparseable (selectReviewCandidates then treats it conservatively).
+      createdMs: parseCreatedUtc(r.created),
     };
   }
 

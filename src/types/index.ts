@@ -9,9 +9,15 @@ export interface Job {
   languagesNeeded: string[];
   wordCount: number;
   detailUrl: string;
-  // True when this candidate was surfaced ONLY by the decoupled review scan
-  // (created beyond the translation window). The tick loop assigns a reviewer to
-  // such candidates but never a translator — see src/index.ts.
+  // Epoch ms of the board "Created" column (UTC), or null when the date string
+  // couldn't be parsed. Drives the reviewOnly decision: a review-pass job is
+  // review-only only when genuinely aged (created before the translation window).
+  createdMs: number | null;
+  // True when this candidate is review-only: surfaced by the decoupled review
+  // scan AND created before the translation window. The tick loop assigns a
+  // reviewer to such candidates but never a translator (see src/index.ts). A
+  // FRESH job the translation scan merely missed this tick is surfaced by the
+  // review pass with reviewOnly=false, so it can still be translated.
   reviewOnly?: boolean;
 }
 

@@ -40,6 +40,13 @@ reliability:
     tickTimeoutMs: 900000        # 15 min — headroom for worst-case real-assign tick (25 jobs) + retries
   reauth:
     alertOnExpiry: true
+    # Auto-renew the TMS access token via the stored refresh_token (no manual
+    # capture-cookies) — proactively near expiry and on-expiry after a restart.
+    # Set false to revert to warn-and-pause. Default true.
+    autoRenew: true
+    # Refresh once the access token is within this many minutes of expiry
+    # (token lives ~12h). Default 120.
+    refreshThresholdMin: 120
   monitoring:
     dailySummaryTime: "09:00"    # local time
     consecutiveErrorAlert: 3     # consecutive failing ticks before alerting

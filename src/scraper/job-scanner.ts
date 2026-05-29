@@ -370,8 +370,9 @@ export class JobScanner {
   /**
    * Read the id signature (sorted, comma-joined) of the data rows currently
    * rendered in the table. Same row shape as parseRows (≥10 cells, numeric
-   * cells[1]) so clickSearch can tell when the table has actually re-rendered to
-   * a new filter's results vs. still showing the previous language's rows.
+   * cells[1]). The single source of the "which rows are showing" rule — both the
+   * filter-switch wait (clickSearch) and the pagination wait (collectAllPages)
+   * go through it, so the row-parsing logic can't drift between call sites.
    */
   private async currentRowIdSignature(): Promise<string> {
     return this.page.evaluate(() => {
@@ -384,6 +385,26 @@ export class JobScanner {
       }
       return ids.sort().join(',');
     });
+  }
+
+  /**
+   * Resolve once the table's row-id signature differs from `beforeSig`, or after
+   * `timeoutMs`. Polls the single currentRowIdSignature() reader so clickSearch
+   * (filter switch) and collectAllPages (pagination) share one extraction rule.
+   * A genuinely unchanged set (same filter re-run, real last page, stable empty
+   * board) never differs and falls through on timeout, leaving the caller to read
+   * the correct current rows.
+   */
+  private async waitForRowIdSignatureChange(beforeSig: string, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      // A transient evaluate failure (mid-navigation) reads as "no change yet" and
+      // keeps polling; a truly dead page falls through on timeout (fail-open) so
+      // the caller's next read surfaces the real error.
+      const sig = await this.currentRowIdSignature().catch(() => beforeSig);
+      if (sig !== beforeSig) return;
+      await this.page.waitForTimeout(150);
+    }
   }
 
   /** Click the Search button and wait for the table to actually reflect the new filter. */
@@ -406,26 +427,8 @@ export class JobScanner {
     await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 10_000 }).catch(() => {});
     // Then wait until the visible row-id set actually differs from the pre-search
     // table — i.e. the new filter's results have landed — instead of a fixed delay
-    // that can read the still-stale (previous-language) rows. A genuinely unchanged
-    // result set (same filter re-run) or a stable empty board never differs and
-    // falls through on timeout, reading the correct rows anyway. Mirrors the
-    // id-signature wait collectAllPages already uses for pagination.
-    await this.page
-      .waitForFunction(
-        (prevSig) => {
-          const ids: string[] = [];
-          for (const row of Array.from(document.querySelectorAll('table tbody tr, [role="row"]'))) {
-            const cells = row.querySelectorAll('td, [role="cell"]');
-            if (cells.length < 10) continue;
-            const idText = (cells[1]?.textContent ?? '').trim();
-            if (/^\d+$/.test(idText)) ids.push(idText);
-          }
-          return ids.sort().join(',') !== prevSig;
-        },
-        beforeSig,
-        { timeout: 5_000 }
-      )
-      .catch(() => {});
+    // that can read the still-stale (previous-language) rows.
+    await this.waitForRowIdSignatureChange(beforeSig, 5_000);
     await this.page.waitForTimeout(300);
   }
 
@@ -504,29 +507,14 @@ export class JobScanner {
       }
 
       await nextBtn.click();
-      // Wait for the spinner to clear, then poll until the visible row-id
-      // signature actually differs from the page we just left — instead of a
-      // fixed delay that can read a half-rendered (still page-N) table and
-      // trip the false "pagination stuck" guard. If the ids genuinely never
-      // change (real last page), this times out and the next iteration's
-      // stuck-detection breaks the loop cleanly.
+      // Wait for the spinner to clear, then until the visible row-id signature
+      // actually differs from the page we just left — instead of a fixed delay
+      // that can read a half-rendered (still page-N) table and trip the false
+      // "pagination stuck" guard. If the ids genuinely never change (real last
+      // page), this times out and the next iteration's stuck-detection breaks
+      // the loop cleanly.
       await this.page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 5_000 }).catch(() => {});
-      await this.page
-        .waitForFunction(
-          (prevSig) => {
-            const ids: string[] = [];
-            for (const row of Array.from(document.querySelectorAll('table tbody tr, [role="row"]'))) {
-              const cells = row.querySelectorAll('td, [role="cell"]');
-              if (cells.length < 10) continue;
-              const idText = (cells[1]?.textContent ?? '').trim();
-              if (/^\d+$/.test(idText)) ids.push(idText);
-            }
-            return ids.sort().join(',') !== prevSig;
-          },
-          currentPageIdSignature,
-          { timeout: 5_000 }
-        )
-        .catch(() => {});
+      await this.waitForRowIdSignatureChange(currentPageIdSignature, 5_000);
     }
 
     if (hitCap) {

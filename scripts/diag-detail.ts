@@ -25,24 +25,34 @@ const tabs = await page.locator('[role="tab"]').allTextContents();
 console.log('\n=== TABS (role=tab) ===');
 console.log(JSON.stringify(tabs));
 
-// 2) Click the Waiting tab specifically
-const waitingTab = page.getByRole('tab', { name: 'Waiting', exact: true });
-const tabVisible = await waitingTab.isVisible().catch(() => false);
-console.log('\nWaiting tab (exact) visible?', tabVisible);
-if (tabVisible) {
-  await waitingTab.click();
-  await page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 10_000 }).catch(() => {});
-}
+// 2) Dump the Target Languages header text (proves which langs the job has AT ALL)
+const targetTxt = await page
+  .locator('xpath=//*[contains(text(),"Target Language")]/following-sibling::*[1]')
+  .first()
+  .textContent()
+  .catch(() => '(not found)');
+console.log('\n=== Target Languages (header) ===');
+console.log((targetTxt ?? '(empty)').trim());
 
-// 3) How many tables / rows exist, and each row's cell texts
-await page.waitForTimeout(1500);
-const tableCount = await page.locator('table').count();
-const rows = page.locator('table tbody tr');
-const rowCount = await rows.count();
-console.log(`\n=== TABLES: ${tableCount}, ROWS in 'table tbody tr': ${rowCount} ===`);
-for (let i = 0; i < rowCount; i++) {
-  const cells = await rows.nth(i).locator('td').allTextContents();
-  console.log(`row ${i} [${cells.length} cells]:`, JSON.stringify(cells.map((c) => c.trim())));
+// 3) Walk EVERY tab (Waiting / In Progress / Published) and dump its language rows.
+// A done lo-LA sits in In Progress/Published, so this reveals whether lo-LA exists
+// anywhere on the job — the decisive test for "does a real lo-LA filter match this job?".
+for (const tabName of tabs) {
+  const tab = page.getByRole('tab', { name: tabName, exact: true });
+  if (!(await tab.isVisible().catch(() => false))) {
+    console.log(`\n--- tab "${tabName}": not visible, skipping ---`);
+    continue;
+  }
+  await tab.click();
+  await page.waitForSelector('.ant-spin-spinning', { state: 'hidden', timeout: 10_000 }).catch(() => {});
+  await page.waitForTimeout(1200);
+  const rows = page.locator('table tbody tr');
+  const rowCount = await rows.count();
+  console.log(`\n=== TAB "${tabName}" — ${rowCount} row(s) ===`);
+  for (let i = 0; i < rowCount; i++) {
+    const cells = await rows.nth(i).locator('td').allTextContents();
+    console.log(`  row ${i} [${cells.length} cells]:`, JSON.stringify(cells.map((c) => c.trim())));
+  }
 }
 
 // 4) Save a screenshot + the tab panel HTML for offline inspection

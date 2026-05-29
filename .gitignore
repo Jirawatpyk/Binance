@@ -12,6 +12,9 @@ logs/
 playwright-report/
 test-results/
 
+# Pasted debug screenshots (Windows "image (N).png" paste convention)
+docs/image*.png
+
 # Local tooling artifacts (not shared)
 .specify/
 Image/

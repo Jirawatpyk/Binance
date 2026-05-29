@@ -265,6 +265,34 @@ review: { enabled: true, maxCandidatesPerTick: 0, reviewers: { lo-LA: "LO_T2@eqh
 `);
     expect(() => loadSettings(p)).toThrow();
   });
+
+  it('defaults reliability.reauth.autoRenew (true) and refreshThresholdMin (120) when omitted', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+`);
+    const s = loadSettings(p);
+    expect(s.reliability.reauth.autoRenew).toBe(true);
+    expect(s.reliability.reauth.refreshThresholdMin).toBe(120);
+  });
+
+  it('rejects a non-positive reliability.reauth.refreshThresholdMin', () => {
+    const p = makeTmp('s.yml', `
+polling: { intervalMinutes: 5, jitterSeconds: 30 }
+scan: { lookbackHours: 48, maxCandidatesPerTick: 25, detailPageDelayMs: 1500, processedJobRetainHours: 96, fullRecheckCooldownMinutes: 30 }
+browser: { headless: true, viewport: { width: 1920, height: 1080 }, navigationTimeoutMs: 30000 }
+storage: { statePath: ./d/s.json, logsDir: ./l, cookiesPath: ./d/c.json }
+assignment: { dryRun: false, maxRetries: 3, retryDelayMs: 5000, maxPartialRetries: 5 }
+logging: { level: info, rotateDays: 14, screenshotRetainDays: 7, screenshotMaxPerDay: 200 }
+reliability: { watchdog: { tickTimeoutMs: 600000 }, reauth: { alertOnExpiry: true, refreshThresholdMin: 0 }, monitoring: { dailySummaryTime: "09:00", consecutiveErrorAlert: 3 }, browserRecycleHours: 24, consecutiveZeroScanAlert: 5 }
+`);
+    expect(() => loadSettings(p)).toThrow();
+  });
 });
 
 describe('loadTranslators', () => {

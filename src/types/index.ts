@@ -52,7 +52,7 @@ export interface Settings {
   logging: { level: 'debug' | 'info' | 'warn' | 'error'; rotateDays: number; screenshotRetainDays: number; screenshotMaxPerDay: number };
   reliability: {
     watchdog: { tickTimeoutMs: number };
-    reauth: { alertOnExpiry: boolean };
+    reauth: { alertOnExpiry: boolean; autoRenew: boolean; refreshThresholdMin: number };
     monitoring: { dailySummaryTime: string; consecutiveErrorAlert: number };
     browserRecycleHours: number;
     consecutiveZeroScanAlert: number;

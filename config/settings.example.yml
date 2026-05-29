@@ -45,7 +45,10 @@ reliability:
     # Set false to revert to warn-and-pause. Default true.
     autoRenew: true
     # Refresh once the access token is within this many minutes of expiry
-    # (token lives ~12h). Default 120.
+    # (token lives ~12h). Default 120. Keep this comfortably ABOVE 90 (the
+    # pre-expiry warning window) so auto-renew fires before the warning — a lower
+    # value makes the bot warn "session expiring, run capture-cookies" before it
+    # has even tried to renew.
     refreshThresholdMin: 120
   monitoring:
     dailySummaryTime: "09:00"    # local time

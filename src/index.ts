@@ -204,7 +204,8 @@ async function main(): Promise<void> {
     onPause: () => health.recordAuthEpisode(),
     // Auto-renew before giving up: recovers an expired session (e.g. one that
     // lapsed while the bot was down) when the refresh_token is still valid.
-    // Gated by the autoRenew config knob.
+    // Gated by the autoRenew knob — undefined here also disables the on-expiry
+    // recovery in ReAuthManager (autoRenew off ⇒ both auto-renew paths off).
     tryRefresh: settings.reliability.reauth.autoRenew ? () => session.refreshAccessToken() : undefined,
   });
 
@@ -614,10 +615,11 @@ async function main(): Promise<void> {
           }
         }
 
-        // Persist while the token is live — this single save handles BOTH a
-        // normal tick and a tick that just refreshed (refreshAccessToken only
-        // writes localStorage), so a refresh-path persist failure is NOT silent:
-        // it goes through the same failure counter + alert below. Gated on a live
+        // Persist while the token is live. refreshAccessToken already persists
+        // immediately on a successful refresh (so an on-expiry refresh isn't lost
+        // if a later step in this tick throws); this counted save is the backstop
+        // that also covers a normal tick (app-refreshed JWT) and surfaces a
+        // sustained persist failure via the counter + alert below. Gated on a live
         // token so we never overwrite the last-known-good cookies.json with a
         // dead/unparseable snapshot.
         if (expMs > Date.now()) {

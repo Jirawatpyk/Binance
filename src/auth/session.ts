@@ -145,10 +145,15 @@ export class AuthSession {
    * relative /cms/... fetch both work, whether the page is on the board or
    * /login). On success the new access token (stored under the `auth_token`
    * localStorage key — the one getAuthExpiryMs reads) and the rotated
-   * refresh_token are written to localStorage; the CALLER persists them via the
-   * tick's counted/alerted saveSession. Doing the writes in-page means that later
-   * saveSession can only snapshot the NEW tokens (no stale overwrite). Returns
-   * true only when a new access token was stored. Never throws.
+   * refresh_token are written to localStorage AND persisted to cookies.json
+   * immediately — so an on-expiry recovery (ReAuthManager.tryRefresh, which runs
+   * at the START of a tick) never leaves the rotated refresh_token unsaved if a
+   * later step in that tick throws before the end-of-tick save (a restart would
+   * then load the now-rotated-away token and pause). Doing the writes in-page
+   * means saveSession can only snapshot the NEW tokens (no stale overwrite). The
+   * persist is best-effort: a failure is logged at error (the tick's counted save
+   * is the backstop), never thrown. Returns true only when a new access token was
+   * stored. Never throws.
    */
   async refreshAccessToken(): Promise<boolean> {
     if (!this.page) return false;
@@ -174,6 +179,17 @@ export class AuthSession {
       })
       .catch(() => false);
     if (ok) {
+      // Persist the rotated tokens NOW (best-effort) so an on-expiry refresh isn't
+      // lost if a later step in this tick throws. Failure is logged at error (not
+      // swallowed) — the tick's counted/alerted saveSession is the backstop.
+      try {
+        await this.saveSession();
+      } catch (e) {
+        this.logger.error(
+          'refreshed the access token but persisting it to cookies.json failed — a restart before the next successful save would load a stale token',
+          { error: (e as Error).message }
+        );
+      }
       this.logger.info('access token refreshed via refresh_token');
     } else {
       this.logger.warn('access token refresh failed (refresh_token invalid/expired or endpoint error)');

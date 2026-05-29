@@ -157,7 +157,14 @@ export class AuthSession {
    */
   async refreshAccessToken(): Promise<boolean> {
     if (!this.page) return false;
-    const ok = await this.page
+    // The in-page fetch carries an AbortSignal.timeout so a stalled/black-holed
+    // refresh endpoint can't hang forever; the outer Promise.race is a backstop
+    // in case page.evaluate itself wedges (page.evaluate has no built-in
+    // timeout). Either way a hung refresh resolves false within ~15s instead of
+    // blocking the whole tick until the watchdog hard-exits the process — this
+    // runs in two hot paths (proactive renew + ReAuthManager.tryRefresh before
+    // pausing), both inside the watchdog window.
+    const evaluatePromise = this.page
       .evaluate(async () => {
         try {
           const rt = window.localStorage.getItem('refresh_token');
@@ -166,6 +173,7 @@ export class AuthSession {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ refreshToken: rt }),
+            signal: AbortSignal.timeout(10_000),
           });
           if (!res.ok) return false;
           const data = await res.json();
@@ -178,6 +186,10 @@ export class AuthSession {
         }
       })
       .catch(() => false);
+    const ok = await Promise.race([
+      evaluatePromise,
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 15_000)),
+    ]);
     if (ok) {
       // Persist the rotated tokens NOW (best-effort) so an on-expiry refresh isn't
       // lost if a later step in this tick throws. Failure is logged at error (not

@@ -422,6 +422,7 @@ async function main(): Promise<void> {
             reviewedThisTick.push({
               jobId: job.id,
               name: job.name,
+              wordCount: detail.wordCount,
               reviewed: reviewed as Record<string, string>,
             });
           }

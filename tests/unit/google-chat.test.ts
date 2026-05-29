@@ -159,24 +159,36 @@ describe('dueColor', () => {
 });
 
 describe('buildReviewSummaryCard', () => {
-  it('summarises reviewer assignments per job', () => {
+  it('summarises reviewer assignments per job, with the job word count', () => {
     const c = card(
       buildReviewSummaryCard([
-        { jobId: '62403', name: 'alicloud-ios', reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+        { jobId: '62403', name: 'alicloud-ios', wordCount: 609, reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
       ])
     );
     expect(c.card.header.title).toBe('🔍 Reviewer assigned — 1 job');
     const text = allText(c);
     expect(text).toContain('Job 62403');
+    expect(text).toContain('609 words');
     expect(text).toContain('alicloud-ios');
     expect(text).toContain('<b>lo-LA</b> → LO_T2@eqho.com');
+  });
+
+  it('totals word count across jobs in the subtitle and formats thousands', () => {
+    const c = card(
+      buildReviewSummaryCard([
+        { jobId: '1', name: 'A', wordCount: 1200, reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+        { jobId: '2', name: 'B', wordCount: 300, reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+      ])
+    );
+    expect(c.card.header.subtitle).toBe('1,500 words');
+    expect(allText(c)).toContain('1,200 words'); // per-job, thousands-separated
   });
 
   it('pluralises and separates multiple jobs with a divider', () => {
     const c = card(
       buildReviewSummaryCard([
-        { jobId: '1', name: 'A', reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
-        { jobId: '2', name: 'B', reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+        { jobId: '1', name: 'A', wordCount: 10, reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
+        { jobId: '2', name: 'B', wordCount: 20, reviewed: { 'lo-LA': 'LO_T2@eqho.com' } },
       ])
     );
     expect(c.card.header.title).toBe('🔍 Reviewer assigned — 2 jobs');
@@ -187,7 +199,7 @@ describe('buildReviewSummaryCard', () => {
 
   it('escapes HTML-special characters in name and reviewer', () => {
     const text = allText(
-      card(buildReviewSummaryCard([{ jobId: 'J<1>', name: 'A & B', reviewed: { 'lo-LA': 'r&x@eqho.com' } }]))
+      card(buildReviewSummaryCard([{ jobId: 'J<1>', name: 'A & B', wordCount: 5, reviewed: { 'lo-LA': 'r&x@eqho.com' } }]))
     );
     expect(text).toContain('Job J&lt;1&gt;');
     expect(text).toContain('A &amp; B');

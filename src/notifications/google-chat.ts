@@ -17,6 +17,7 @@ export interface AssignmentSummaryItem {
 export interface ReviewSummaryItem {
   jobId: string;
   name: string;
+  wordCount: number;
   reviewed: Record<string, string>; // language code -> reviewer email
 }
 
@@ -133,6 +134,8 @@ export function buildAssignmentSummaryCard(jobs: AssignmentSummaryItem[]): unkno
  * dividers between jobs. Mirrors buildAssignmentSummaryCard but for reviewers.
  */
 export function buildReviewSummaryCard(items: ReviewSummaryItem[]): unknown {
+  const totalWords = items.reduce((n, j) => n + j.wordCount, 0);
+
   const widgets: unknown[] = [];
   items.forEach((j, i) => {
     if (i > 0) widgets.push({ divider: {} });
@@ -142,7 +145,7 @@ export function buildReviewSummaryCard(items: ReviewSummaryItem[]): unknown {
     widgets.push({
       decoratedText: {
         startIcon: { knownIcon: 'PERSON' },
-        topLabel: `Job ${esc(j.jobId)}`,
+        topLabel: `Job ${esc(j.jobId)}  ·  ${j.wordCount.toLocaleString('en-US')} words`,
         text: `<b>${esc(j.name)}</b><br>${langs}`,
         wrapText: true,
       },
@@ -154,7 +157,10 @@ export function buildReviewSummaryCard(items: ReviewSummaryItem[]): unknown {
       {
         cardId: `review-${Date.now()}`,
         card: {
-          header: { title: `🔍 Reviewer assigned — ${items.length} job${plural}` },
+          header: {
+            title: `🔍 Reviewer assigned — ${items.length} job${plural}`,
+            subtitle: `${totalWords.toLocaleString('en-US')} words`,
+          },
           sections: [{ widgets }],
         },
       },

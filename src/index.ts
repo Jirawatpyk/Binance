@@ -201,6 +201,58 @@ async function main(): Promise<void> {
     tryRefresh: settings.reliability.reauth.autoRenew ? () => session.refreshAccessToken() : undefined,
   });
 
+  // Persist health metrics, swallowing a transient write failure (a sustained
+  // one surfaces via the daily heartbeat's under-reporting). Used on every tick
+  // exit path so an early return never drops this tick's metrics.
+  const persistHealth = async (): Promise<void> => {
+    try {
+      await health.save();
+    } catch (err) {
+      logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
+    }
+  };
+
+  // Evaluate + fire the consecutive-error alert from ONE place, so every error
+  // path (auth gate, browser recycle/recovery, work) feeds the same detector
+  // rather than only the work-phase catch.
+  const maybeAlertErrorRate = async (): Promise<void> => {
+    if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
+      await diagNotifier
+        .notify(
+          `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
+          'error'
+        )
+        .catch(() => {});
+    }
+  };
+
+  // Shared failure handler for ANY phase of the tick. A browser-dead error
+  // rebuilds the page (so the next tick runs on a live browser); anything else
+  // is counted + alerted. Callers persist health afterwards.
+  const handleTickFailure = async (err: unknown): Promise<void> => {
+    if (isBrowserDeadError(err)) {
+      logger.error('browser died; recovering', { error: (err as Error).message });
+      await diagNotifier.notify('Browser crashed — recovering', 'warn').catch(() => {});
+      try {
+        page = await session.recover();
+        rebuildPipeline(page);
+        lastBrowserStart = Date.now();
+      } catch (recoverErr) {
+        // recover() can itself throw (e.g. cookies gone → LoginFailedError).
+        // Count + alert so a recurring recovery failure isn't silent; the next
+        // tick's reauth.ensureReady() drives PAUSED_AUTH if genuinely expired.
+        health.recordTickError();
+        logger.error('browser recovery failed', { error: (recoverErr as Error).message });
+        await diagNotifier.notify(`Browser recovery failed: ${(recoverErr as Error).message}`, 'error').catch(() => {});
+        await maybeAlertErrorRate();
+      }
+    } else {
+      health.recordTickError();
+      logger.error('tick failed', { error: (err as Error).message });
+      await maybeAlertErrorRate();
+    }
+  };
+
   const tick = async (): Promise<void> => {
     const tickStart = Date.now();
     logger.info('tick started');
@@ -224,43 +276,53 @@ async function main(): Promise<void> {
       }
     }
 
-    if (!(await reauth.ensureReady())) {
-      try {
-        await health.save();
-      } catch (err) {
-        logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
+    // --- Auth + pre-work phase ---
+    // Previously this ran OUTSIDE any try/catch, so a thrown non-LoginFailedError
+    // (browser-dead, navigation timeout, or the post-refresh re-verify rethrow)
+    // escaped the tick entirely — uncounted by health, unrecovered, never alerted.
+    // Route it through the same failure handler as the work phase.
+    try {
+      if (!(await reauth.ensureReady())) {
+        await persistHealth();
+        return; // paused awaiting manual cookie refresh
       }
-      return; // paused awaiting manual cookie refresh
-    }
 
-    // ReAuthManager.ensureReady() may have rebuilt the browser context (cookie
-    // refresh) — adopt the new page into the pipeline.
-    if (session.getPage() !== page) {
-      page = session.getPage();
-      rebuildPipeline(page);
-      lastBrowserStart = Date.now();
-      logger.info('pipeline rebuilt after context change (cookie refresh)');
-    }
-
-    // Proactive browser recycle for memory hygiene.
-    if (Date.now() - lastBrowserStart >= settings.reliability.browserRecycleHours * 3_600_000) {
-      logger.info('scheduled browser recycle (memory hygiene)');
-      try {
-        page = await session.recover();
+      // ReAuthManager.ensureReady() may have rebuilt the browser context (cookie
+      // refresh) — adopt the new page into the pipeline.
+      if (session.getPage() !== page) {
+        page = session.getPage();
         rebuildPipeline(page);
         lastBrowserStart = Date.now();
-      } catch (err) {
-        // recover() already closed the old browser before throwing (e.g. cookies
-        // expired → LoginFailedError), so `page` now points at a dead browser.
-        // Don't run the scan on it — defer this tick; next tick's
-        // reauth.ensureReady() drives the clean PAUSED_AUTH flow. Count it as an
-        // error (so a recurring recycle failure can trip the alert) and persist
-        // health before bailing out of the tick.
-        health.recordTickError();
-        logger.error('browser recycle failed; deferring tick to next cycle', { error: (err as Error).message });
-        await health.save().catch(() => {});
-        return;
+        logger.info('pipeline rebuilt after context change (cookie refresh)');
       }
+
+      // Proactive browser recycle for memory hygiene.
+      if (Date.now() - lastBrowserStart >= settings.reliability.browserRecycleHours * 3_600_000) {
+        logger.info('scheduled browser recycle (memory hygiene)');
+        try {
+          page = await session.recover();
+          rebuildPipeline(page);
+          lastBrowserStart = Date.now();
+        } catch (err) {
+          // recover() already closed the old browser before throwing (e.g. cookies
+          // expired → LoginFailedError), so `page` now points at a dead browser.
+          // Don't run the scan on it — defer this tick; next tick's
+          // reauth.ensureReady() drives the clean PAUSED_AUTH flow. Count + alert
+          // (so a recurring recycle failure trips the alert), then persist health.
+          health.recordTickError();
+          logger.error('browser recycle failed; deferring tick to next cycle', { error: (err as Error).message });
+          await maybeAlertErrorRate();
+          await persistHealth();
+          return;
+        }
+      }
+    } catch (err) {
+      // ensureReady()/context-adoption threw a non-auth error (browser-dead, nav
+      // timeout, post-refresh re-verify rethrow). Handle it like a work-phase
+      // failure — recover the browser or count+alert — then defer to next tick.
+      await handleTickFailure(err);
+      await persistHealth();
+      return;
     }
 
     const assignedThisTick: AssignmentSummaryItem[] = [];
@@ -572,32 +634,9 @@ async function main(): Promise<void> {
         }
       }
     } catch (err) {
-      if (isBrowserDeadError(err)) {
-        logger.error('browser died; recovering', { error: (err as Error).message });
-        await diagNotifier.notify('Browser crashed — recovering', 'warn');
-        try {
-          page = await session.recover();
-          rebuildPipeline(page);
-          lastBrowserStart = Date.now();
-        } catch (recoverErr) {
-          // recover() can itself throw (e.g. cookies gone → LoginFailedError).
-          // Don't let it escape the tick uncounted/un-alerted: record the error
-          // and notify. The next tick's reauth.ensureReady() drives PAUSED_AUTH
-          // if the session is genuinely expired.
-          health.recordTickError();
-          logger.error('browser recovery failed', { error: (recoverErr as Error).message });
-          await diagNotifier.notify(`Browser recovery failed: ${(recoverErr as Error).message}`, 'error');
-        }
-      } else {
-        health.recordTickError();
-        logger.error('tick failed', { error: (err as Error).message });
-        if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
-          await diagNotifier.notify(
-            `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
-            'error'
-          );
-        }
-      }
+      // Browser-dead → rebuild the page; anything else → count + alert. Shared
+      // with the auth-phase catch so every error path is handled identically.
+      await handleTickFailure(err);
     } finally {
       // Persist this tick's state mutations in one write — in finally so a
       // browser-dead throw (recovered in the catch above) still saves processed/
@@ -633,11 +672,7 @@ async function main(): Promise<void> {
     // Reviewer assignments notify Chat only — never the Sheet.
     await notifier.notifyReviews(reviewedThisTick);
 
-    try {
-      await health.save();
-    } catch (err) {
-      logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
-    }
+    await persistHealth();
     logger.info('tick complete', { durationMs: Date.now() - tickStart });
   };
 

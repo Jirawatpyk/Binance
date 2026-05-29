@@ -139,6 +139,47 @@ export class AuthSession {
     if (st) this.lastCookieMtime = st.mtimeMs;
   }
 
+  /**
+   * Renew the access token by calling the TMS refresh endpoint with the stored
+   * refresh_token, FROM THE PAGE CONTEXT (same origin, so localStorage + the
+   * relative /cms/... fetch both work, whether the page is on the board or
+   * /login). On success the new access_token + rotated refresh_token are written
+   * to localStorage and persisted to cookies.json immediately — so a later
+   * saveSession this tick can only persist the NEW tokens (no stale overwrite).
+   * Returns true only when a new access token was stored. Never throws.
+   */
+  async refreshAccessToken(): Promise<boolean> {
+    if (!this.page) return false;
+    const ok = await this.page
+      .evaluate(async () => {
+        try {
+          const rt = window.localStorage.getItem('refresh_token');
+          if (!rt) return false;
+          const res = await fetch('/cms/i18n/tsc/admin/be/auth/refresh', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refreshToken: rt }),
+          });
+          if (!res.ok) return false;
+          const data = await res.json();
+          if (!data || !data.access_token) return false;
+          window.localStorage.setItem('auth_token', data.access_token);
+          if (data.refresh_token) window.localStorage.setItem('refresh_token', data.refresh_token);
+          return true;
+        } catch {
+          return false;
+        }
+      })
+      .catch(() => false);
+    if (ok) {
+      await this.saveSession().catch(() => {});
+      this.logger.info('access token refreshed via refresh_token');
+    } else {
+      this.logger.warn('access token refresh failed (refresh_token invalid/expired or endpoint error)');
+    }
+    return ok;
+  }
+
   /** Expiry (epoch ms) of the live auth_token in the page's localStorage, or null. */
   async getAuthExpiryMs(): Promise<number | null> {
     if (!this.page) return null;

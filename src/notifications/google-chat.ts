@@ -286,30 +286,40 @@ export class GoogleChatNotifier {
     private logger: winston.Logger
   ) {}
 
-  /** Fire-and-forget lifecycle/alert message as a Google Chat card. Never throws. */
-  async notify(text: string, severity: Severity = 'info'): Promise<void> {
-    await this.post(buildTextCard(text, severity), severity);
+  /** True when a webhook URL is configured (i.e. delivery is even possible). */
+  isConfigured(): boolean {
+    return !!this.webhookUrl;
   }
 
-  /** Fire-and-forget per-cycle assignment summary card. No-op when the list is empty. */
-  async notifyAssignments(jobs: AssignmentSummaryItem[]): Promise<void> {
-    if (jobs.length === 0) return;
-    await this.post(buildAssignmentSummaryCard(jobs), 'info');
+  /** Fire-and-forget lifecycle/alert message as a Google Chat card. Never throws.
+   *  Returns true when the card was delivered (2xx), false otherwise. */
+  async notify(text: string, severity: Severity = 'info'): Promise<boolean> {
+    return this.post(buildTextCard(text, severity), severity);
   }
 
-  /** Fire-and-forget per-cycle reviewer-assignment summary. No-op when empty. */
-  async notifyReviews(items: ReviewSummaryItem[]): Promise<void> {
-    if (items.length === 0) return;
-    await this.post(buildReviewSummaryCard(items), 'info');
+  /** Fire-and-forget per-cycle assignment summary card. No-op (true) when empty. */
+  async notifyAssignments(jobs: AssignmentSummaryItem[]): Promise<boolean> {
+    if (jobs.length === 0) return true;
+    return this.post(buildAssignmentSummaryCard(jobs), 'info');
   }
 
-  /** Fire-and-forget daily heartbeat summary card. Never throws. */
-  async notifyDailySummary(stats: DailySummaryStats): Promise<void> {
-    await this.post(buildDailySummaryCard(stats), 'info');
+  /** Fire-and-forget per-cycle reviewer-assignment summary. No-op (true) when empty. */
+  async notifyReviews(items: ReviewSummaryItem[]): Promise<boolean> {
+    if (items.length === 0) return true;
+    return this.post(buildReviewSummaryCard(items), 'info');
   }
 
-  private async post(payload: unknown, severity: Severity): Promise<void> {
-    if (!this.webhookUrl) return;
+  /** Fire-and-forget daily heartbeat summary card. Never throws. Returns true
+   *  when delivered (2xx) so the caller only marks the heartbeat sent on a
+   *  confirmed delivery. */
+  async notifyDailySummary(stats: DailySummaryStats): Promise<boolean> {
+    return this.post(buildDailySummaryCard(stats), 'info');
+  }
+
+  /** Returns true only on a confirmed 2xx delivery; false when unconfigured,
+   *  non-2xx, or the fetch threw/timed out. Never throws. */
+  private async post(payload: unknown, severity: Severity): Promise<boolean> {
+    if (!this.webhookUrl) return false;
     try {
       const res = await fetch(this.webhookUrl, {
         method: 'POST',
@@ -319,11 +329,13 @@ export class GoogleChatNotifier {
       });
       if (res.ok) {
         this.consecutiveFailures = 0;
-        return;
+        return true;
       }
       this.recordFailure(severity, `non-2xx ${res.status}`);
+      return false;
     } catch (err) {
       this.recordFailure(severity, (err as Error).message);
+      return false;
     }
   }
 

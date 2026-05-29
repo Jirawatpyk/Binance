@@ -17,8 +17,10 @@ import { SheetsAssignmentLogger } from './integrations/google-sheets.js';
 import type { SupportedLanguage, Settings, TranslatorsConfig } from './types/index.js';
 import { ReAuthManager } from './auth/reauth-manager.js';
 import { HealthMonitor } from './core/health-monitor.js';
+import { localDateString, summaryGapDays } from './core/health-utils.js';
 import { runWithWatchdog } from './core/watchdog.js';
-import { isBrowserDeadError } from './core/recovery-utils.js';
+import { isBrowserDeadError, pruneCorruptBackups } from './core/recovery-utils.js';
+import path from 'path';
 import { TranslatorNotFoundError } from './core/errors.js';
 import { pendingRole, canAssignRole } from './assignment/eligibility.js';
 import { classifyOutcome } from './assignment/outcome.js';
@@ -128,25 +130,18 @@ async function main(): Promise<void> {
   await sheetsLogger.init();
 
   let lastBrowserStart = Date.now();
-  // Warn once when the session token drops under this many minutes to expiry;
-  // re-armed automatically if a refresh extends it.
+  // Daily maintenance runs once per local calendar day (prune + screenshot
+  // cleanup). Tracked here — not coupled to heartbeat delivery — so a deferred
+  // markDailySummarySent (webhook outage) doesn't re-run maintenance every tick.
+  let lastMaintenanceDate: string | null = null;
+  // Warn once when the session token drops under this many minutes to expiry.
+  // The "alert once until recovery" flags and the save-failure streaks below all
+  // live in HealthMonitor (health.json) so a watchdog hard-exit / restart loop
+  // doesn't re-fire the same alerts every restart, and a restart between save
+  // failures can't reset the streak and defeat the threshold escalation.
   const SESSION_EXPIRY_WARN_MIN = 90;
-  let expiryAlerted = false;
-  // The pre-expiry warning depends on reading auth_token from localStorage. If
-  // that read keeps failing (e.g. TMS renames the key) the warning would die
-  // silently — so we surface that too, gated so it alerts once until it recovers.
-  let expiryReadFailedAlerted = false;
-  // Persisting the refreshed token is best-effort, but a SUSTAINED failure
-  // (disk full, cookies.json locked) silently reintroduces the stale-snapshot
-  // bug. Swallow transient failures; alert once when they pile up past this.
   const SESSION_SAVE_FAILURE_ALERT_THRESHOLD = 3;
-  let consecutiveSaveFailures = 0;
-  // state.json holds the round-robin counters + processed/abandoned ledger. A
-  // sustained write failure silently corrupts correctness (jobs re-assigned,
-  // counters frozen on one translator), so escalate a streak like the session
-  // save above rather than warn-and-forget every tick.
   const STATE_SAVE_FAILURE_ALERT_THRESHOLD = 3;
-  let consecutiveStateSaveFailures = 0;
 
   // One-time maintenance at startup: bound state.json and screenshot disk usage.
   const prunedAtStart = state.pruneOldJobs(settings.scan.processedJobRetainHours);
@@ -155,6 +150,14 @@ async function main(): Promise<void> {
     await state.save();
   }
   await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+  // Bound *.corrupt.* backups — especially relevant here since a corrupt file
+  // was just recovered above if stateRecovered/healthRecovered fired.
+  await pruneCorruptBackups(path.dirname(settings.storage.statePath), 5).catch((err) => {
+    logger.warn('startup corrupt-backup prune failed (non-fatal)', { error: (err as Error).message });
+    return 0;
+  });
+  // Count startup maintenance as today's run so the first tick doesn't repeat it.
+  lastMaintenanceDate = localDateString(new Date());
 
   const scanAlert = (msg: string): void => {
     void diagNotifier.notify(msg, 'warn');
@@ -195,68 +198,179 @@ async function main(): Promise<void> {
       : async () => {},
     logger,
     onPause: () => health.recordAuthEpisode(),
+    // Auto-renew before giving up: recovers an expired session (e.g. one that
+    // lapsed while the bot was down) when the refresh_token is still valid.
+    // Gated by the autoRenew knob — undefined here also disables the on-expiry
+    // recovery in ReAuthManager (autoRenew off ⇒ both auto-renew paths off).
+    tryRefresh: settings.reliability.reauth.autoRenew ? () => session.refreshAccessToken() : undefined,
   });
+
+  // Persist health metrics, swallowing a transient write failure (a sustained
+  // one surfaces via the daily heartbeat's under-reporting). Used on every tick
+  // exit path so an early return never drops this tick's metrics.
+  const persistHealth = async (): Promise<void> => {
+    try {
+      await health.save();
+    } catch (err) {
+      logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
+    }
+  };
+
+  // Evaluate + fire the consecutive-error alert from ONE place, so every error
+  // path (auth gate, browser recycle/recovery, work) feeds the same detector
+  // rather than only the work-phase catch.
+  const maybeAlertErrorRate = async (): Promise<void> => {
+    if (health.consumeErrorRateAlert(settings.reliability.monitoring.consecutiveErrorAlert)) {
+      await diagNotifier
+        .notify(
+          `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
+          'error'
+        )
+        .catch(() => {});
+    }
+  };
+
+  // Shared failure handler for ANY phase of the tick. A browser-dead error
+  // rebuilds the page (so the next tick runs on a live browser); anything else
+  // is counted + alerted. Callers persist health afterwards.
+  const handleTickFailure = async (err: unknown): Promise<void> => {
+    if (isBrowserDeadError(err)) {
+      logger.error('browser died; recovering', { error: (err as Error).message });
+      await diagNotifier.notify('Browser crashed — recovering', 'warn').catch(() => {});
+      try {
+        page = await session.recover();
+        rebuildPipeline(page);
+        lastBrowserStart = Date.now();
+      } catch (recoverErr) {
+        // recover() can itself throw (e.g. cookies gone → LoginFailedError).
+        // Count + alert so a recurring recovery failure isn't silent; the next
+        // tick's reauth.ensureReady() drives PAUSED_AUTH if genuinely expired.
+        health.recordTickError();
+        logger.error('browser recovery failed', { error: (recoverErr as Error).message });
+        await diagNotifier.notify(`Browser recovery failed: ${(recoverErr as Error).message}`, 'error').catch(() => {});
+        await maybeAlertErrorRate();
+      }
+    } else {
+      health.recordTickError();
+      logger.error('tick failed', { error: (err as Error).message });
+      await maybeAlertErrorRate();
+    }
+  };
 
   const tick = async (): Promise<void> => {
     const tickStart = Date.now();
     logger.info('tick started');
     health.recordTickStart();
 
-    // Daily summary is a heartbeat — send it regardless of auth/work state.
+    // Daily summary is a heartbeat — the primary liveness signal — so send it
+    // regardless of auth/work state, and only mark it sent once a channel has
+    // actually delivered it (a transient webhook outage otherwise loses that
+    // day's heartbeat with no in-day retry). Production is the normal home; the
+    // diagnostics channel is a delivery backstop so the signal isn't lost when
+    // the prod webhook is unconfigured or briefly down.
     if (health.isDailySummaryDue(new Date(), settings.reliability.monitoring.dailySummaryTime)) {
-      await notifier.notifyDailySummary(health.dailySummaryStats());
-      health.markDailySummarySent();
-      // Daily maintenance alongside the heartbeat. Best-effort: never let a
-      // maintenance error abort the tick.
-      try {
-        const pruned = state.pruneOldJobs(settings.scan.processedJobRetainHours);
-        if (pruned > 0) {
-          logger.info('pruned old processed jobs', { removed: pruned });
-          await state.save();
+      const stats = health.dailySummaryStats();
+      // A gap ≥2 means the bot sent no heartbeat for ≥1 full day (an outage):
+      // the figures below are the last fully-recorded day BEFORE the gap, and the
+      // intermediate days have no summary. Flag that rather than letting the stale
+      // date read as a normal daily summary.
+      const lastSummary = health.snapshot().lastDailySummaryDate;
+      const gapDays = summaryGapDays(lastSummary, new Date());
+      let delivered = await notifier.notifyDailySummary(stats);
+      if (!delivered) delivered = await diagNotifier.notifyDailySummary(stats);
+      if (delivered || (!notifier.isConfigured() && !diagNotifier.isConfigured())) {
+        // Confirmed delivery, or no webhook configured at all (log-only
+        // deployment — nothing to deliver, so don't retry every tick forever).
+        health.markDailySummarySent();
+        // Catch-up notice fires HERE (only when the heartbeat is actually marked
+        // sent) so a multi-day delivery outage — during which markDailySummarySent
+        // is skipped and isDailySummaryDue stays true every tick — doesn't fire
+        // this notice on every cycle. It surfaces once, alongside the delivered
+        // catch-up heartbeat.
+        if (gapDays >= 2) {
+          logger.warn('catch-up heartbeat after a multi-day gap', {
+            lastSummary,
+            gapDays,
+            reportedDay: stats.date,
+          });
+          await diagNotifier
+            .notify(
+              `Catch-up daily summary: no heartbeat for ~${gapDays} days. The figures (${stats.date}) are the last fully-recorded day before the gap; intermediate days have no summary.`,
+              'warn'
+            )
+            .catch(() => {});
         }
-        await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
-      } catch (err) {
-        logger.warn('daily maintenance failed (non-fatal)', { error: (err as Error).message });
+      } else {
+        logger.warn('daily heartbeat not delivered to any channel; will retry next tick');
+      }
+
+      // Daily maintenance — once per local day, independent of heartbeat
+      // delivery. Best-effort: never let a maintenance error abort the tick.
+      const today = localDateString(new Date());
+      if (lastMaintenanceDate !== today) {
+        lastMaintenanceDate = today;
+        try {
+          const pruned = state.pruneOldJobs(settings.scan.processedJobRetainHours);
+          if (pruned > 0) {
+            logger.info('pruned old processed jobs', { removed: pruned });
+            await state.save();
+          }
+          await cleanOldScreenshots(settings.storage.logsDir, settings.logging.screenshotRetainDays);
+          const removedBackups = await pruneCorruptBackups(path.dirname(settings.storage.statePath), 5);
+          if (removedBackups > 0) logger.info('pruned old .corrupt.* backups', { removed: removedBackups });
+        } catch (err) {
+          logger.warn('daily maintenance failed (non-fatal)', { error: (err as Error).message });
+        }
       }
     }
 
-    if (!(await reauth.ensureReady())) {
-      try {
-        await health.save();
-      } catch (err) {
-        logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
+    // --- Auth + pre-work phase ---
+    // Previously this ran OUTSIDE any try/catch, so a thrown non-LoginFailedError
+    // (browser-dead, navigation timeout, or the post-refresh re-verify rethrow)
+    // escaped the tick entirely — uncounted by health, unrecovered, never alerted.
+    // Route it through the same failure handler as the work phase.
+    try {
+      if (!(await reauth.ensureReady())) {
+        await persistHealth();
+        return; // paused awaiting manual cookie refresh
       }
-      return; // paused awaiting manual cookie refresh
-    }
 
-    // ReAuthManager.ensureReady() may have rebuilt the browser context (cookie
-    // refresh) — adopt the new page into the pipeline.
-    if (session.getPage() !== page) {
-      page = session.getPage();
-      rebuildPipeline(page);
-      lastBrowserStart = Date.now();
-      logger.info('pipeline rebuilt after context change (cookie refresh)');
-    }
-
-    // Proactive browser recycle for memory hygiene.
-    if (Date.now() - lastBrowserStart >= settings.reliability.browserRecycleHours * 3_600_000) {
-      logger.info('scheduled browser recycle (memory hygiene)');
-      try {
-        page = await session.recover();
+      // ReAuthManager.ensureReady() may have rebuilt the browser context (cookie
+      // refresh) — adopt the new page into the pipeline.
+      if (session.getPage() !== page) {
+        page = session.getPage();
         rebuildPipeline(page);
         lastBrowserStart = Date.now();
-      } catch (err) {
-        // recover() already closed the old browser before throwing (e.g. cookies
-        // expired → LoginFailedError), so `page` now points at a dead browser.
-        // Don't run the scan on it — defer this tick; next tick's
-        // reauth.ensureReady() drives the clean PAUSED_AUTH flow. Count it as an
-        // error (so a recurring recycle failure can trip the alert) and persist
-        // health before bailing out of the tick.
-        health.recordTickError();
-        logger.error('browser recycle failed; deferring tick to next cycle', { error: (err as Error).message });
-        await health.save().catch(() => {});
-        return;
+        logger.info('pipeline rebuilt after context change (cookie refresh)');
       }
+
+      // Proactive browser recycle for memory hygiene.
+      if (Date.now() - lastBrowserStart >= settings.reliability.browserRecycleHours * 3_600_000) {
+        logger.info('scheduled browser recycle (memory hygiene)');
+        try {
+          page = await session.recover();
+          rebuildPipeline(page);
+          lastBrowserStart = Date.now();
+        } catch (err) {
+          // recover() already closed the old browser before throwing (e.g. cookies
+          // expired → LoginFailedError), so `page` now points at a dead browser.
+          // Don't run the scan on it — defer this tick; next tick's
+          // reauth.ensureReady() drives the clean PAUSED_AUTH flow. Count + alert
+          // (so a recurring recycle failure trips the alert), then persist health.
+          health.recordTickError();
+          logger.error('browser recycle failed; deferring tick to next cycle', { error: (err as Error).message });
+          await maybeAlertErrorRate();
+          await persistHealth();
+          return;
+        }
+      }
+    } catch (err) {
+      // ensureReady()/context-adoption threw a non-auth error (browser-dead, nav
+      // timeout, post-refresh re-verify rethrow). Handle it like a work-phase
+      // failure — recover the browser or count+alert — then defer to next tick.
+      await handleTickFailure(err);
+      await persistHealth();
+      return;
     }
 
     const assignedThisTick: AssignmentSummaryItem[] = [];
@@ -291,7 +405,30 @@ async function main(): Promise<void> {
       // that simply returns no rows still trips the zero-scan alert above);
       // setDateFilter/pagination failures fire their own onAlert. The daily
       // summary's "Reviews assigned" line adds right-cadence visibility.
-      for (const job of candidates) {
+      // Soft work budget: stop opening NEW candidates once most of the watchdog
+      // window is used, so a slow-but-progressing tick (TMS latency / retry
+      // storm) defers the rest to the next tick instead of being hard-killed
+      // mid-work by the watchdog (which would restart the process and re-scan the
+      // same backlog → crash loop). Deferred candidates are re-surfaced next
+      // tick; this tick's progress is persisted in the finally below.
+      const workBudgetMs = settings.reliability.watchdog.tickTimeoutMs * 0.7;
+      // Track how many candidates we actually opened vs how many threw while
+      // processing, so a tick where EVERY opened job fails (systematic detail-
+      // page selector drift) escalates instead of ending "successful" with zero
+      // assignments (see the recordTickSuccess gate after the loop).
+      let processingAttempts = 0;
+      let processingFailures = 0;
+      let deferredOnBudget = false;
+      for (const [candidateIndex, job] of candidates.entries()) {
+        if (Date.now() - tickStart > workBudgetMs) {
+          logger.warn('tick work budget exceeded; deferring remaining candidates to next tick', {
+            deferred: candidates.length - candidateIndex,
+            elapsedMs: Date.now() - tickStart,
+            workBudgetMs,
+          });
+          deferredOnBudget = true;
+          break;
+        }
         const entry = state.getProcessedEntry(job.id);
         // Skip only jobs we've given up on. Do NOT skip FULL jobs in general: a
         // job's lo-LA and km-KH rows can become claimable at different times, and
@@ -332,6 +469,7 @@ async function main(): Promise<void> {
           await new Promise((r) => setTimeout(r, settings.scan.detailPageDelayMs));
         }
         try {
+          processingAttempts += 1;
           logger.info('processing job', { jobId: job.id, name: job.name });
           const detail = await processor.open(job.detailUrl, job.id);
           const assigned: Partial<Record<SupportedLanguage, string>> = {};
@@ -472,18 +610,35 @@ async function main(): Promise<void> {
           }
         } catch (err) {
           if (isBrowserDeadError(err)) throw err; // bubble to outer handler for recovery
+          processingFailures += 1;
           logger.error('job processing error', { jobId: job.id, error: (err as Error).message });
           await captureScreenshot(page, settings.storage.logsDir, `job-${job.id}`, settings.logging.screenshotMaxPerDay).catch(() => null);
           await diagNotifier.notify(`Job ${job.id} processing error: ${(err as Error).message}`, 'error');
         }
       }
-      health.recordTickSuccess();
+      // If every candidate we opened threw while processing (systematic detail-
+      // page breakage, e.g. selector drift) the tick would otherwise end
+      // "successful" with zero assignments and never trip the consecutive-error
+      // alert — the per-job catch only notifies diagnostics. Count it as a tick
+      // error so it escalates through the same detector as other failures.
+      // Only escalate when we processed the WHOLE candidate set and every job
+      // failed (systematic breakage). If we broke early on the work budget we
+      // only sampled a prefix, so an all-failed prefix isn't evidence of drift.
+      if (!deferredOnBudget && processingAttempts > 0 && processingFailures === processingAttempts) {
+        health.recordTickError();
+        logger.error('all opened candidates failed to process — possible detail-page selector drift', {
+          attempts: processingAttempts,
+        });
+        await maybeAlertErrorRate();
+      } else {
+        health.recordTickSuccess();
+      }
 
       // Session maintenance (best-effort; never fail the tick):
       //  1) Persist the current session so any JWT the app refreshed this tick
       //     survives a restart (the stale-snapshot-on-restart problem).
       //  2) Warn before the token expires so it can be refreshed proactively.
-      const expMs = await session.getAuthExpiryMs().catch((e) => {
+      let expMs = await session.getAuthExpiryMs().catch((e) => {
         logger.debug('reading auth token expiry failed', { error: (e as Error).message });
         return null;
       });
@@ -493,36 +648,58 @@ async function main(): Promise<void> {
       // failed. That silently disables BOTH save-gating and the expiry warning,
       // so surface it (gated) rather than no-op.
       if (expMs === null) {
-        if (!expiryReadFailedAlerted) {
+        if (!health.expiryReadFailedAlerted) {
           await diagNotifier
             .notify(
               'Could not read TMS session token expiry — the pre-expiry warning is not functioning. Check whether the TMS app changed its auth_token storage.',
               'warn'
             )
             .catch(() => {});
-          expiryReadFailedAlerted = true;
+          health.setExpiryReadFailedAlerted(true);
         }
       } else {
-        expiryReadFailedAlerted = false; // recovered — re-arm
+        health.setExpiryReadFailedAlerted(false); // recovered — re-arm
 
-        // Persist only when the token is live, so we never overwrite the
-        // last-known-good cookies.json with a dead/unparseable snapshot. A
-        // single failure is swallowed; a sustained one is alerted (it silently
-        // reintroduces the stale-snapshot bug this save exists to prevent).
+        // Proactive auto-renew: when the access token is within
+        // refreshThresholdMin of expiry, renew it now so the session never dies.
+        // refreshAccessToken persists the rotated tokens to cookies.json itself;
+        // the counted save below is a backstop that also covers a normal tick
+        // (app-refreshed JWT) and surfaces a sustained persist failure via the
+        // counter + alert. On success, re-read the expiry so the pre-expiry
+        // warning (gated on !refreshed below) reflects the fresh token.
+        let refreshed = false;
+        if (
+          settings.reliability.reauth.autoRenew &&
+          (expMs - Date.now()) / 60_000 <= settings.reliability.reauth.refreshThresholdMin
+        ) {
+          refreshed = await session.refreshAccessToken();
+          if (refreshed) {
+            const newExp = await session.getAuthExpiryMs().catch(() => null);
+            if (newExp !== null) expMs = newExp;
+          }
+        }
+
+        // Persist while the token is live. refreshAccessToken already persists
+        // immediately on a successful refresh (so an on-expiry refresh isn't lost
+        // if a later step in this tick throws); this counted save is the backstop
+        // that also covers a normal tick (app-refreshed JWT) and surfaces a
+        // sustained persist failure via the counter + alert below. Gated on a live
+        // token so we never overwrite the last-known-good cookies.json with a
+        // dead/unparseable snapshot.
         if (expMs > Date.now()) {
           try {
             await session.saveSession();
-            consecutiveSaveFailures = 0;
+            health.recordSessionSaveResult(true);
           } catch (e) {
-            consecutiveSaveFailures += 1;
+            const failures = health.recordSessionSaveResult(false);
             logger.error('persisting session failed', {
               error: (e as Error).message,
-              consecutiveSaveFailures,
+              consecutiveSaveFailures: failures,
             });
-            if (consecutiveSaveFailures === SESSION_SAVE_FAILURE_ALERT_THRESHOLD) {
+            if (failures === SESSION_SAVE_FAILURE_ALERT_THRESHOLD) {
               await diagNotifier
                 .notify(
-                  `Failed to persist the TMS session ${consecutiveSaveFailures}× in a row (cookies.json may be locked or the disk full). On restart the bot will load a stale token and likely pause for re-auth.`,
+                  `Failed to persist the TMS session ${failures}× in a row (cookies.json may be locked or the disk full). On restart the bot will load a stale token and likely pause for re-auth.`,
                   'error'
                 )
                 .catch(() => {});
@@ -530,46 +707,27 @@ async function main(): Promise<void> {
           }
         }
 
+        // Skip the pre-expiry warning when we just refreshed this tick: the token
+        // is fresh. (If the post-refresh expiry re-read failed, expMs is stale/
+        // near-expiry and would otherwise fire a false "expiring" alert; next tick
+        // re-reads the real expiry.)
         const minsLeft = Math.max(0, Math.round((expMs - Date.now()) / 60_000));
-        if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted) {
+        if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !health.expiryAlerted && !refreshed) {
           await diagNotifier
             .notify(
               `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,
               'warn'
             )
             .catch(() => {});
-          expiryAlerted = true;
+          health.setExpiryAlerted(true);
         } else if (minsLeft > SESSION_EXPIRY_WARN_MIN) {
-          expiryAlerted = false; // token was refreshed/extended — re-arm the warning
+          health.setExpiryAlerted(false); // token was refreshed/extended — re-arm the warning
         }
       }
     } catch (err) {
-      if (isBrowserDeadError(err)) {
-        logger.error('browser died; recovering', { error: (err as Error).message });
-        await diagNotifier.notify('Browser crashed — recovering', 'warn');
-        try {
-          page = await session.recover();
-          rebuildPipeline(page);
-          lastBrowserStart = Date.now();
-        } catch (recoverErr) {
-          // recover() can itself throw (e.g. cookies gone → LoginFailedError).
-          // Don't let it escape the tick uncounted/un-alerted: record the error
-          // and notify. The next tick's reauth.ensureReady() drives PAUSED_AUTH
-          // if the session is genuinely expired.
-          health.recordTickError();
-          logger.error('browser recovery failed', { error: (recoverErr as Error).message });
-          await diagNotifier.notify(`Browser recovery failed: ${(recoverErr as Error).message}`, 'error');
-        }
-      } else {
-        health.recordTickError();
-        logger.error('tick failed', { error: (err as Error).message });
-        if (health.shouldAlertErrorRate(settings.reliability.monitoring.consecutiveErrorAlert)) {
-          await diagNotifier.notify(
-            `Bot failing: ${settings.reliability.monitoring.consecutiveErrorAlert} consecutive ticks errored`,
-            'error'
-          );
-        }
-      }
+      // Browser-dead → rebuild the page; anything else → count + alert. Shared
+      // with the auth-phase catch so every error path is handled identically.
+      await handleTickFailure(err);
     } finally {
       // Persist this tick's state mutations in one write — in finally so a
       // browser-dead throw (recovered in the catch above) still saves processed/
@@ -578,17 +736,17 @@ async function main(): Promise<void> {
       // because it silently corrupts correctness (duplicate assigns, frozen RR).
       try {
         await state.save();
-        consecutiveStateSaveFailures = 0;
+        health.recordStateSaveResult(true);
       } catch (e) {
-        consecutiveStateSaveFailures += 1;
+        const failures = health.recordStateSaveResult(false);
         logger.error('state.save failed', {
           error: (e as Error).message,
-          consecutiveStateSaveFailures,
+          consecutiveStateSaveFailures: failures,
         });
-        if (consecutiveStateSaveFailures === STATE_SAVE_FAILURE_ALERT_THRESHOLD) {
+        if (failures === STATE_SAVE_FAILURE_ALERT_THRESHOLD) {
           await diagNotifier
             .notify(
-              `state.json failed to save ${consecutiveStateSaveFailures}× in a row — round-robin counters and processed-job history are not persisting. The bot may re-assign jobs and skew translator load until this is fixed (check disk space / file locks).`,
+              `state.json failed to save ${failures}× in a row — round-robin counters and processed-job history are not persisting. The bot may re-assign jobs and skew translator load until this is fixed (check disk space / file locks).`,
               'error'
             )
             .catch(() => {});
@@ -605,25 +763,28 @@ async function main(): Promise<void> {
     // Reviewer assignments notify Chat only — never the Sheet.
     await notifier.notifyReviews(reviewedThisTick);
 
-    try {
-      await health.save();
-    } catch (err) {
-      logger.warn('health.save failed (non-fatal)', { error: (err as Error).message });
-    }
+    await persistHealth();
     logger.info('tick complete', { durationMs: Date.now() - tickStart });
   };
 
   const guardedTick = (): Promise<void> =>
     runWithWatchdog(tick, settings.reliability.watchdog.tickTimeoutMs, () => {
-      logger.error('tick hung beyond watchdog timeout; exiting for service restart', {
+      logger.error('tick hung beyond watchdog timeout; flushing and exiting for service restart', {
         tickTimeoutMs: settings.reliability.watchdog.tickTimeoutMs,
       });
-      // Hard-exit safety net: fires even if notify hangs in a wedged event loop.
+      // Hard-exit safety net: fires even if a flush/notify hangs in a wedged
+      // event loop, so the process always exits for the service to restart.
       setTimeout(() => process.exit(1), 6_000).unref();
-      void diagNotifier
-        .notify('Bot tick hung — exiting for auto-restart', 'error')
-        .catch(() => {})
-        .finally(() => process.exit(1));
+      // Best-effort flush of in-flight mutations before the hard exit — a hang
+      // otherwise drops this tick's processed/abandoned status, round-robin
+      // counters, and health metrics (the end-of-tick saves never run). The
+      // saves are plain atomic fs writes, independent of the wedged browser, and
+      // the 6s backstop above bounds them.
+      void Promise.allSettled([
+        state.save().catch((e) => logger.error('flush state.save failed on hang', { error: (e as Error).message })),
+        health.save().catch((e) => logger.error('flush health.save failed on hang', { error: (e as Error).message })),
+        diagNotifier.notify('Bot tick hung — exiting for auto-restart', 'error').catch(() => {}),
+      ]).finally(() => process.exit(1));
     });
 
   const scheduler = new Scheduler(

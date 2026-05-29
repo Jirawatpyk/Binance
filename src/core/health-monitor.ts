@@ -21,10 +21,23 @@ interface HealthState {
   lastSuccessAt: string | null;
   lastAssignmentAt: string | null;
   consecutiveErrors: number;
+  // True once the consecutive-error alert has fired for the current streak.
+  // Persisted so a watchdog hard-exit / restart loop doesn't re-fire it every
+  // restart; cleared by recordTickSuccess when the streak ends.
+  errorAlerted: boolean;
   consecutiveZeroScans: number;
   today: TodayCounters;
   previousDay: TodayCounters | null; // the last completed day, stashed at rollover
   lastDailySummaryDate: string | null;
+  // One-shot alert suppression + save-failure streaks, persisted so a watchdog
+  // hard-exit / restart loop doesn't re-fire "once" alerts every restart, and so
+  // a restart between save failures can't defeat the threshold escalation.
+  alerts: {
+    expiryAlerted: boolean;
+    expiryReadFailedAlerted: boolean;
+    sessionSaveFailures: number;
+    stateSaveFailures: number;
+  };
 }
 
 function emptyToday(now: Date): TodayCounters {
@@ -33,18 +46,32 @@ function emptyToday(now: Date): TodayCounters {
 
 export class HealthMonitor {
   private state: HealthState;
+  private saveSeq = 0; // unique temp-file suffix so concurrent saves don't clobber a shared .tmp
+  // When THIS process started. Kept separate from state.startedAt (which load()
+  // overwrites with the persisted install time) so uptime reflects the current
+  // process — otherwise a watchdog hard-exit / restart loop would keep reporting
+  // an ever-growing "uptime" and hide the very failure it should surface.
+  private readonly processStartedAt: Date;
 
   constructor(private filePath: string, now: Date = new Date()) {
+    this.processStartedAt = now;
     this.state = {
       startedAt: now.toISOString(),
       lastTickAt: null,
       lastSuccessAt: null,
       lastAssignmentAt: null,
       consecutiveErrors: 0,
+      errorAlerted: false,
       consecutiveZeroScans: 0,
       today: emptyToday(now),
       previousDay: null,
       lastDailySummaryDate: null,
+      alerts: {
+        expiryAlerted: false,
+        expiryReadFailedAlerted: false,
+        sessionSaveFailures: 0,
+        stateSaveFailures: 0,
+      },
     };
   }
 
@@ -54,7 +81,12 @@ export class HealthMonitor {
   async load(): Promise<boolean> {
     try {
       const raw = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as HealthState;
-      this.state = { ...this.state, ...raw, today: { ...this.state.today, ...raw.today } };
+      this.state = {
+        ...this.state,
+        ...raw,
+        today: { ...this.state.today, ...raw.today },
+        alerts: { ...this.state.alerts, ...raw.alerts },
+      };
       return false;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
@@ -91,6 +123,7 @@ export class HealthMonitor {
 
   recordTickSuccess(now: Date = new Date()): void {
     this.state.consecutiveErrors = 0;
+    this.state.errorAlerted = false; // streak ended — re-arm the alert
     this.state.lastSuccessAt = now.toISOString();
   }
 
@@ -127,8 +160,39 @@ export class HealthMonitor {
   resetZeroScans(): void { this.state.consecutiveZeroScans = 0; }
   getConsecutiveZeroScans(): number { return this.state.consecutiveZeroScans; }
 
-  shouldAlertErrorRate(threshold: number): boolean {
-    return this.state.consecutiveErrors > 0 && this.state.consecutiveErrors % threshold === 0;
+  /** Consume the consecutive-error alert: returns true at most once per error
+   *  streak — the first time the streak reaches `threshold` — then false until a
+   *  success re-arms it (recordTickSuccess). NOTE this is a command, not a pure
+   *  predicate: a `true` return records (and persists) that the alert fired, so a
+   *  restart mid-streak doesn't re-alert and a sustained outage doesn't produce an
+   *  alert every Nth tick. Call exactly once per failing tick, only to send. */
+  consumeErrorRateAlert(threshold: number): boolean {
+    if (this.state.consecutiveErrors >= threshold && !this.state.errorAlerted) {
+      this.state.errorAlerted = true;
+      return true;
+    }
+    return false;
+  }
+
+  // --- Persisted alert-suppression flags (survive restart) ---
+  get expiryAlerted(): boolean { return this.state.alerts.expiryAlerted; }
+  setExpiryAlerted(v: boolean): void { this.state.alerts.expiryAlerted = v; }
+  get expiryReadFailedAlerted(): boolean { return this.state.alerts.expiryReadFailedAlerted; }
+  setExpiryReadFailedAlerted(v: boolean): void { this.state.alerts.expiryReadFailedAlerted = v; }
+
+  /** Record a session-save result and return the current consecutive-failure
+   *  streak (0 after a success). Persisted so a restart between failures doesn't
+   *  reset the streak and defeat the threshold escalation. */
+  recordSessionSaveResult(ok: boolean): number {
+    this.state.alerts.sessionSaveFailures = ok ? 0 : this.state.alerts.sessionSaveFailures + 1;
+    return this.state.alerts.sessionSaveFailures;
+  }
+
+  /** Record a state.json-save result and return the current consecutive-failure
+   *  streak (0 after a success). */
+  recordStateSaveResult(ok: boolean): number {
+    this.state.alerts.stateSaveFailures = ok ? 0 : this.state.alerts.stateSaveFailures + 1;
+    return this.state.alerts.stateSaveFailures;
   }
 
   isDailySummaryDue(now: Date, summaryTime: string): boolean {
@@ -146,7 +210,7 @@ export class HealthMonitor {
   dailySummaryStats(now: Date = new Date()): DailySummaryStats {
     const t = this.state.previousDay ?? this.state.today;
     const uptimeHours = Number(
-      ((now.getTime() - new Date(this.state.startedAt).getTime()) / 3_600_000).toFixed(1)
+      ((now.getTime() - this.processStartedAt.getTime()) / 3_600_000).toFixed(1)
     );
     return {
       date: t.date,
@@ -170,7 +234,9 @@ export class HealthMonitor {
 
   async save(): Promise<void> {
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = this.filePath + '.tmp';
+    // Unique temp name per call so the watchdog hang-flush save can't race the
+    // still-running tick's save on a shared `${filePath}.tmp` (see StateStore.save).
+    const tmp = `${this.filePath}.${process.pid}.${this.saveSeq++}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(this.state, null, 2), 'utf-8');
     await fs.rename(tmp, this.filePath);
   }

@@ -42,7 +42,16 @@ const settingsSchema = z.object({
   }),
   reliability: z.object({
     watchdog: z.object({ tickTimeoutMs: z.number().int().positive() }),
-    reauth: z.object({ alertOnExpiry: z.boolean() }),
+    reauth: z.object({
+      alertOnExpiry: z.boolean(),
+      // Auto-renew the TMS access token via the stored refresh_token instead of
+      // pausing for a manual capture-cookies. Defaulted so an existing
+      // settings.yml still loads (and existing deployments get the feature).
+      autoRenew: z.boolean().default(true),
+      // Refresh proactively once the access token is within this many minutes of
+      // expiry (the access token lives ~12h).
+      refreshThresholdMin: z.number().int().positive().default(120),
+    }),
     monitoring: z.object({
       dailySummaryTime: z.string().regex(/^\d{2}:\d{2}$/, 'must be HH:mm'),
       consecutiveErrorAlert: z.number().int().positive(),

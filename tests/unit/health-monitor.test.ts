@@ -53,20 +53,52 @@ describe('HealthMonitor', () => {
     expect(monitor.snapshot().consecutiveErrors).toBe(0);
   });
 
-  it('shouldAlertErrorRate fires exactly when reaching threshold', () => {
+  it('consumeErrorRateAlert fires once at threshold then suppresses until recovery', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
     monitor.recordTickError(); // 1
-    expect(monitor.shouldAlertErrorRate(3)).toBe(false);
+    expect(monitor.consumeErrorRateAlert(3)).toBe(false);
     monitor.recordTickError(); // 2
-    expect(monitor.shouldAlertErrorRate(3)).toBe(false);
-    monitor.recordTickError(); // 3
-    expect(monitor.shouldAlertErrorRate(3)).toBe(true);
-    monitor.recordTickError(); // 4
-    expect(monitor.shouldAlertErrorRate(3)).toBe(false);
+    expect(monitor.consumeErrorRateAlert(3)).toBe(false);
+    monitor.recordTickError(); // 3 — crosses threshold → fire once
+    expect(monitor.consumeErrorRateAlert(3)).toBe(true);
+    monitor.recordTickError(); // 4 — already alerted, no alert storm
+    expect(monitor.consumeErrorRateAlert(3)).toBe(false);
     monitor.recordTickError(); // 5
-    expect(monitor.shouldAlertErrorRate(3)).toBe(false);
-    monitor.recordTickError(); // 6
-    expect(monitor.shouldAlertErrorRate(3)).toBe(true); // re-fires at multiples
+    expect(monitor.consumeErrorRateAlert(3)).toBe(false);
+    monitor.recordTickError(); // 6 — a multiple of 3, but must NOT re-fire (no alert storm)
+    expect(monitor.consumeErrorRateAlert(3)).toBe(false);
+    // A success ends the streak and re-arms the alert for the next one.
+    monitor.recordTickSuccess();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    expect(monitor.consumeErrorRateAlert(3)).toBe(true);
+  });
+
+  it('fires on the first check even when the streak already overshot the threshold', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    // Streak climbs to 5 before consumeErrorRateAlert is ever consulted — the
+    // old `% threshold === 0` logic would MISS this (5 % 3 !== 0); `>= threshold`
+    // must still fire.
+    for (let i = 0; i < 5; i++) monitor.recordTickError();
+    expect(monitor.consumeErrorRateAlert(3)).toBe(true);
+    expect(monitor.consumeErrorRateAlert(3)).toBe(false); // one-shot after firing
+  });
+
+  it('does not re-alert after a restart while the error streak is unbroken', async () => {
+    const { monitor, file } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    await monitor.load();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    monitor.recordTickError();
+    expect(monitor.consumeErrorRateAlert(3)).toBe(true); // fires + records that it alerted
+    await monitor.save();
+
+    // A watchdog hard-exit / service restart reloads the persisted streak.
+    const m2 = new HealthMonitor(file, new Date(2026, 4, 7, 8, 5));
+    await m2.load();
+    expect(m2.snapshot().consecutiveErrors).toBe(3);
+    expect(m2.consumeErrorRateAlert(3)).toBe(false); // suppressed — already alerted before restart
   });
 
   it('rolls over counters on a new day', () => {
@@ -139,6 +171,31 @@ describe('HealthMonitor', () => {
     expect(s.jobsAssigned).toBe(1);
   });
 
+  it('computes uptime from THIS process start, not the persisted install time', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
+    const file = path.join(dir, 'health.json');
+    // A health.json written by a prior install 10 days ago.
+    writeFileSync(
+      file,
+      JSON.stringify({
+        startedAt: '2026-05-01T00:00:00.000Z',
+        lastTickAt: null,
+        lastSuccessAt: null,
+        lastAssignmentAt: null,
+        consecutiveErrors: 0,
+        consecutiveZeroScans: 0,
+        today: { date: '2026-05-11', assigned: 0, jobsAssigned: 0, reviewed: 0, failed: 0, authEpisodes: 0, lo: 0, km: 0, ticks: 0 },
+        previousDay: null,
+        lastDailySummaryDate: null,
+      })
+    );
+    // This process started at 08:00 today.
+    const m = new HealthMonitor(file, new Date(2026, 4, 11, 8, 0));
+    await m.load();
+    // 09:00 → 1h since THIS process started, not ~240h since the install date.
+    expect(m.dailySummaryStats(new Date(2026, 4, 11, 9, 0)).uptimeHours).toBe(1);
+  });
+
   it('defaults jobsAssigned to 0 when loading a pre-jobsAssigned health.json', async () => {
     const dir = mkdtempSync(path.join(tmpdir(), 'health-'));
     const file = path.join(dir, 'health.json');
@@ -163,6 +220,40 @@ describe('HealthMonitor', () => {
     const m = new HealthMonitor(file, new Date(2026, 4, 7, 8, 0));
     await expect(m.load()).resolves.toBe(true);
     expect(m.snapshot().today.assigned).toBe(0); // fresh
+  });
+
+  it('persists the session save-failure streak so escalation survives a restart', async () => {
+    const { monitor, file } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    await monitor.load();
+    expect(monitor.recordSessionSaveResult(false)).toBe(1);
+    expect(monitor.recordSessionSaveResult(false)).toBe(2);
+    await monitor.save();
+    // A restart between failures must NOT reset the streak to 1 (which would
+    // defeat the threshold-3 escalation under a restart loop).
+    const m2 = new HealthMonitor(file, new Date(2026, 4, 7, 8, 5));
+    await m2.load();
+    expect(m2.recordSessionSaveResult(false)).toBe(3);
+  });
+
+  it('resets the save-failure streak on a successful save', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    monitor.recordSessionSaveResult(false);
+    monitor.recordSessionSaveResult(false);
+    expect(monitor.recordSessionSaveResult(true)).toBe(0);
+    monitor.recordStateSaveResult(false);
+    expect(monitor.recordStateSaveResult(true)).toBe(0);
+  });
+
+  it('persists expiry alert-suppression flags across a restart (no duplicate alerts)', async () => {
+    const { monitor, file } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    await monitor.load();
+    monitor.setExpiryAlerted(true);
+    monitor.setExpiryReadFailedAlerted(true);
+    await monitor.save();
+    const m2 = new HealthMonitor(file, new Date(2026, 4, 7, 8, 5));
+    await m2.load();
+    expect(m2.expiryAlerted).toBe(true);
+    expect(m2.expiryReadFailedAlerted).toBe(true);
   });
 
   it('tracks consecutive zero scans and resets', () => {

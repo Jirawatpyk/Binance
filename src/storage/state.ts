@@ -5,6 +5,7 @@ import type { State, SupportedLanguage, ProcessedJobEntry } from '../types/index
 export class StateStore {
   private state: State = { processedJobs: {}, roundRobinCounters: {} };
   private dirty = false;
+  private saveSeq = 0; // unique temp-file suffix so concurrent saves don't clobber a shared .tmp
 
   constructor(private filePath: string) {}
 
@@ -37,7 +38,12 @@ export class StateStore {
   async save(): Promise<void> {
     if (!this.dirty) return;
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-    const tmp = this.filePath + '.tmp';
+    // Unique temp name per call: the watchdog hang-flush can run state.save()
+    // concurrently with the still-running tick's own save, and a shared
+    // `${filePath}.tmp` would let the two interleave (half-written tmp renamed,
+    // or rename ENOENT). Distinct tmp files + atomic rename make it last-write-
+    // wins with no corruption (both writers serialise the same in-memory state).
+    const tmp = `${this.filePath}.${process.pid}.${this.saveSeq++}.tmp`;
     await fs.writeFile(tmp, JSON.stringify(this.state, null, 2), 'utf-8');
     await fs.rename(tmp, this.filePath);
     this.dirty = false;

@@ -29,6 +29,15 @@ interface HealthState {
   today: TodayCounters;
   previousDay: TodayCounters | null; // the last completed day, stashed at rollover
   lastDailySummaryDate: string | null;
+  // One-shot alert suppression + save-failure streaks, persisted so a watchdog
+  // hard-exit / restart loop doesn't re-fire "once" alerts every restart, and so
+  // a restart between save failures can't defeat the threshold escalation.
+  alerts: {
+    expiryAlerted: boolean;
+    expiryReadFailedAlerted: boolean;
+    sessionSaveFailures: number;
+    stateSaveFailures: number;
+  };
 }
 
 function emptyToday(now: Date): TodayCounters {
@@ -56,6 +65,12 @@ export class HealthMonitor {
       today: emptyToday(now),
       previousDay: null,
       lastDailySummaryDate: null,
+      alerts: {
+        expiryAlerted: false,
+        expiryReadFailedAlerted: false,
+        sessionSaveFailures: 0,
+        stateSaveFailures: 0,
+      },
     };
   }
 
@@ -65,7 +80,12 @@ export class HealthMonitor {
   async load(): Promise<boolean> {
     try {
       const raw = JSON.parse(await fs.readFile(this.filePath, 'utf-8')) as HealthState;
-      this.state = { ...this.state, ...raw, today: { ...this.state.today, ...raw.today } };
+      this.state = {
+        ...this.state,
+        ...raw,
+        today: { ...this.state.today, ...raw.today },
+        alerts: { ...this.state.alerts, ...raw.alerts },
+      };
       return false;
     } catch (err) {
       const code = (err as NodeJS.ErrnoException).code;
@@ -150,6 +170,27 @@ export class HealthMonitor {
       return true;
     }
     return false;
+  }
+
+  // --- Persisted alert-suppression flags (survive restart) ---
+  get expiryAlerted(): boolean { return this.state.alerts.expiryAlerted; }
+  setExpiryAlerted(v: boolean): void { this.state.alerts.expiryAlerted = v; }
+  get expiryReadFailedAlerted(): boolean { return this.state.alerts.expiryReadFailedAlerted; }
+  setExpiryReadFailedAlerted(v: boolean): void { this.state.alerts.expiryReadFailedAlerted = v; }
+
+  /** Record a session-save result and return the current consecutive-failure
+   *  streak (0 after a success). Persisted so a restart between failures doesn't
+   *  reset the streak and defeat the threshold escalation. */
+  recordSessionSaveResult(ok: boolean): number {
+    this.state.alerts.sessionSaveFailures = ok ? 0 : this.state.alerts.sessionSaveFailures + 1;
+    return this.state.alerts.sessionSaveFailures;
+  }
+
+  /** Record a state.json-save result and return the current consecutive-failure
+   *  streak (0 after a success). */
+  recordStateSaveResult(ok: boolean): number {
+    this.state.alerts.stateSaveFailures = ok ? 0 : this.state.alerts.stateSaveFailures + 1;
+    return this.state.alerts.stateSaveFailures;
   }
 
   isDailySummaryDue(now: Date, summaryTime: string): boolean {

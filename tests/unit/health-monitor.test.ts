@@ -212,6 +212,40 @@ describe('HealthMonitor', () => {
     expect(m.snapshot().today.assigned).toBe(0); // fresh
   });
 
+  it('persists the session save-failure streak so escalation survives a restart', async () => {
+    const { monitor, file } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    await monitor.load();
+    expect(monitor.recordSessionSaveResult(false)).toBe(1);
+    expect(monitor.recordSessionSaveResult(false)).toBe(2);
+    await monitor.save();
+    // A restart between failures must NOT reset the streak to 1 (which would
+    // defeat the threshold-3 escalation under a restart loop).
+    const m2 = new HealthMonitor(file, new Date(2026, 4, 7, 8, 5));
+    await m2.load();
+    expect(m2.recordSessionSaveResult(false)).toBe(3);
+  });
+
+  it('resets the save-failure streak on a successful save', () => {
+    const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    monitor.recordSessionSaveResult(false);
+    monitor.recordSessionSaveResult(false);
+    expect(monitor.recordSessionSaveResult(true)).toBe(0);
+    monitor.recordStateSaveResult(false);
+    expect(monitor.recordStateSaveResult(true)).toBe(0);
+  });
+
+  it('persists expiry alert-suppression flags across a restart (no duplicate alerts)', async () => {
+    const { monitor, file } = newMonitor(new Date(2026, 4, 7, 8, 0));
+    await monitor.load();
+    monitor.setExpiryAlerted(true);
+    monitor.setExpiryReadFailedAlerted(true);
+    await monitor.save();
+    const m2 = new HealthMonitor(file, new Date(2026, 4, 7, 8, 5));
+    await m2.load();
+    expect(m2.expiryAlerted).toBe(true);
+    expect(m2.expiryReadFailedAlerted).toBe(true);
+  });
+
   it('tracks consecutive zero scans and resets', () => {
     const { monitor } = newMonitor(new Date(2026, 4, 7, 8, 0));
     monitor.recordZeroScan();

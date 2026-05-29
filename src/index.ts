@@ -133,25 +133,14 @@ async function main(): Promise<void> {
   // cleanup). Tracked here — not coupled to heartbeat delivery — so a deferred
   // markDailySummarySent (webhook outage) doesn't re-run maintenance every tick.
   let lastMaintenanceDate: string | null = null;
-  // Warn once when the session token drops under this many minutes to expiry;
-  // re-armed automatically if a refresh extends it.
+  // Warn once when the session token drops under this many minutes to expiry.
+  // The "alert once until recovery" flags and the save-failure streaks below all
+  // live in HealthMonitor (health.json) so a watchdog hard-exit / restart loop
+  // doesn't re-fire the same alerts every restart, and a restart between save
+  // failures can't reset the streak and defeat the threshold escalation.
   const SESSION_EXPIRY_WARN_MIN = 90;
-  let expiryAlerted = false;
-  // The pre-expiry warning depends on reading auth_token from localStorage. If
-  // that read keeps failing (e.g. TMS renames the key) the warning would die
-  // silently — so we surface that too, gated so it alerts once until it recovers.
-  let expiryReadFailedAlerted = false;
-  // Persisting the refreshed token is best-effort, but a SUSTAINED failure
-  // (disk full, cookies.json locked) silently reintroduces the stale-snapshot
-  // bug. Swallow transient failures; alert once when they pile up past this.
   const SESSION_SAVE_FAILURE_ALERT_THRESHOLD = 3;
-  let consecutiveSaveFailures = 0;
-  // state.json holds the round-robin counters + processed/abandoned ledger. A
-  // sustained write failure silently corrupts correctness (jobs re-assigned,
-  // counters frozen on one translator), so escalate a streak like the session
-  // save above rather than warn-and-forget every tick.
   const STATE_SAVE_FAILURE_ALERT_THRESHOLD = 3;
-  let consecutiveStateSaveFailures = 0;
 
   // One-time maintenance at startup: bound state.json and screenshot disk usage.
   const prunedAtStart = state.pruneOldJobs(settings.scan.processedJobRetainHours);
@@ -621,17 +610,17 @@ async function main(): Promise<void> {
       // failed. That silently disables BOTH save-gating and the expiry warning,
       // so surface it (gated) rather than no-op.
       if (expMs === null) {
-        if (!expiryReadFailedAlerted) {
+        if (!health.expiryReadFailedAlerted) {
           await diagNotifier
             .notify(
               'Could not read TMS session token expiry — the pre-expiry warning is not functioning. Check whether the TMS app changed its auth_token storage.',
               'warn'
             )
             .catch(() => {});
-          expiryReadFailedAlerted = true;
+          health.setExpiryReadFailedAlerted(true);
         }
       } else {
-        expiryReadFailedAlerted = false; // recovered — re-arm
+        health.setExpiryReadFailedAlerted(false); // recovered — re-arm
 
         // Proactive auto-renew: when the access token is within
         // refreshThresholdMin of expiry, renew it now so the session never dies.
@@ -661,17 +650,17 @@ async function main(): Promise<void> {
         if (expMs > Date.now()) {
           try {
             await session.saveSession();
-            consecutiveSaveFailures = 0;
+            health.recordSessionSaveResult(true);
           } catch (e) {
-            consecutiveSaveFailures += 1;
+            const failures = health.recordSessionSaveResult(false);
             logger.error('persisting session failed', {
               error: (e as Error).message,
-              consecutiveSaveFailures,
+              consecutiveSaveFailures: failures,
             });
-            if (consecutiveSaveFailures === SESSION_SAVE_FAILURE_ALERT_THRESHOLD) {
+            if (failures === SESSION_SAVE_FAILURE_ALERT_THRESHOLD) {
               await diagNotifier
                 .notify(
-                  `Failed to persist the TMS session ${consecutiveSaveFailures}× in a row (cookies.json may be locked or the disk full). On restart the bot will load a stale token and likely pause for re-auth.`,
+                  `Failed to persist the TMS session ${failures}× in a row (cookies.json may be locked or the disk full). On restart the bot will load a stale token and likely pause for re-auth.`,
                   'error'
                 )
                 .catch(() => {});
@@ -684,16 +673,16 @@ async function main(): Promise<void> {
         // near-expiry and would otherwise fire a false "expiring" alert; next tick
         // re-reads the real expiry.)
         const minsLeft = Math.max(0, Math.round((expMs - Date.now()) / 60_000));
-        if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !expiryAlerted && !refreshed) {
+        if (minsLeft <= SESSION_EXPIRY_WARN_MIN && !health.expiryAlerted && !refreshed) {
           await diagNotifier
             .notify(
               `TMS session token expires in ~${minsLeft}m — refresh the session (npm run capture-cookies) before it dies, or the bot will pause for re-auth`,
               'warn'
             )
             .catch(() => {});
-          expiryAlerted = true;
+          health.setExpiryAlerted(true);
         } else if (minsLeft > SESSION_EXPIRY_WARN_MIN) {
-          expiryAlerted = false; // token was refreshed/extended — re-arm the warning
+          health.setExpiryAlerted(false); // token was refreshed/extended — re-arm the warning
         }
       }
     } catch (err) {
@@ -708,17 +697,17 @@ async function main(): Promise<void> {
       // because it silently corrupts correctness (duplicate assigns, frozen RR).
       try {
         await state.save();
-        consecutiveStateSaveFailures = 0;
+        health.recordStateSaveResult(true);
       } catch (e) {
-        consecutiveStateSaveFailures += 1;
+        const failures = health.recordStateSaveResult(false);
         logger.error('state.save failed', {
           error: (e as Error).message,
-          consecutiveStateSaveFailures,
+          consecutiveStateSaveFailures: failures,
         });
-        if (consecutiveStateSaveFailures === STATE_SAVE_FAILURE_ALERT_THRESHOLD) {
+        if (failures === STATE_SAVE_FAILURE_ALERT_THRESHOLD) {
           await diagNotifier
             .notify(
-              `state.json failed to save ${consecutiveStateSaveFailures}× in a row — round-robin counters and processed-job history are not persisting. The bot may re-assign jobs and skew translator load until this is fixed (check disk space / file locks).`,
+              `state.json failed to save ${failures}× in a row — round-robin counters and processed-job history are not persisting. The bot may re-assign jobs and skew translator load until this is fixed (check disk space / file locks).`,
               'error'
             )
             .catch(() => {});

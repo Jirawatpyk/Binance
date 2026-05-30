@@ -90,13 +90,16 @@ scp data\state.json          ubuntu@${HOST_IP}:/tmp/state.json
 sudo mv /tmp/settings.yml            /opt/binance-bot/config/settings.yml
 sudo mv /tmp/translators.yml         /opt/binance-bot/config/translators.yml
 sudo mv /tmp/.env                    /opt/binance-bot/.env
-sudo mv /tmp/google-credentials.json /opt/binance-bot/google-credentials.json
 sudo mv /tmp/cookies.json            /opt/binance-bot/data/cookies.json
-sudo mv /tmp/state.json              /opt/binance-bot/data/state.json   # only if you copied it
+# optional — only the lines for files you actually copied:
+sudo mv /tmp/google-credentials.json /opt/binance-bot/google-credentials.json   # only if sheets: is used
+sudo mv /tmp/state.json              /opt/binance-bot/data/state.json           # only if you copied it
 
-# everything the service touches must be owned by binancebot
-sudo chown -R binancebot:binancebot /opt/binance-bot/config /opt/binance-bot/.env \
-  /opt/binance-bot/google-credentials.json /opt/binance-bot/data
+# everything the service touches must be owned by binancebot. config/, .env and
+# data/ always exist; chown google-credentials.json separately so skipping it
+# (sheets unused) doesn't error the whole command.
+sudo chown -R binancebot:binancebot /opt/binance-bot/config /opt/binance-bot/.env /opt/binance-bot/data
+[ -f /opt/binance-bot/google-credentials.json ] && sudo chown binancebot:binancebot /opt/binance-bot/google-credentials.json
 ```
 
 (The relative paths in `settings.yml` — `./data/state.json`, `./logs`, `./data/cookies.json` — resolve correctly because the unit sets `WorkingDirectory=/opt/binance-bot`.)

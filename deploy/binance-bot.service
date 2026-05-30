@@ -1,0 +1,50 @@
+[Unit]
+Description=Binance / translationtms.com auto-assign Playwright bot (24/7)
+# network-online ensures the cookie session + Playwright can reach the network at boot.
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=binancebot
+Group=binancebot
+
+# WorkingDirectory is REQUIRED, not cosmetic: config/settings.yml uses RELATIVE paths
+# (statePath=./data/state.json, logsDir=./logs, cookiesPath=./data/cookies.json) plus the
+# single-instance lock at ./data/.lock. Without this the bot would resolve those against the
+# wrong cwd and either fail to find cookies or write state/logs outside the repo.
+WorkingDirectory=/opt/binance-bot
+
+Environment=NODE_ENV=production
+# TZ is REQUIRED: the daily heartbeat uses process LOCAL time (now.getHours() in
+# health-utils.ts), so on a UTC Oracle Cloud host the 09:00 (Asia/Bangkok) summary would
+# otherwise fire 7 hours off. Pin the process timezone to match the operator.
+Environment=TZ=Asia/Bangkok
+
+# Run the COMPILED build (npm run build -> dist/), never tsx watch in production.
+ExecStart=/usr/bin/node dist/index.js
+
+# Mirror the Windows-service behavior the bot depends on: runWithWatchdog hard-exits a hung
+# tick, and we want systemd to bring it straight back up.
+Restart=always
+RestartSec=10
+
+# --- Hardening (kept conservative so Chromium still works) ---
+NoNewPrivileges=true
+# ProtectSystem=full makes /usr, /boot, /etc read-only but leaves /opt writable enough; we
+# still must explicitly allow the repo's data/ + logs/ writes via ReadWritePaths below.
+# DO NOT tighten to ProtectSystem=strict or add ProtectHome=true: Chromium needs read+write
+# to /home/binancebot/.cache/ms-playwright (where setup-vps.sh installs the browser as the
+# service user) — locking /home would make the browser fail to launch.
+ProtectSystem=full
+ReadWritePaths=/opt/binance-bot
+# PrivateTmp gives the service its own /tmp + /var/tmp (good isolation, Chromium-safe).
+PrivateTmp=true
+# NOTE: deliberately NOT setting PrivateDevices/DevicePolicy — Chromium needs a real /dev/shm,
+# and over-tight device sandboxing is a common cause of headless-Chromium crashes here.
+# MEMORY HINT: the Ampere Always-Free VM has limited RAM; if Chromium OOMs, add e.g.
+# MemoryMax=1500M (and consider --disable-dev-shm-usage in the launch args) rather than
+# tightening the device sandbox.
+
+[Install]
+WantedBy=multi-user.target
